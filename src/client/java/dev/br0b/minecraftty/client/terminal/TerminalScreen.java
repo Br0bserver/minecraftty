@@ -1,0 +1,357 @@
+package dev.br0b.minecraftty.client.terminal;
+
+import com.jediterm.terminal.TerminalColor;
+import com.jediterm.terminal.TextStyle;
+import com.jediterm.terminal.model.TerminalTextBuffer;
+import dev.br0b.minecraftty.Minecraftty;
+import dev.br0b.minecraftty.client.TerminalConfig;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.CharacterEvent;
+import net.minecraft.client.input.KeyEvent;
+import net.minecraft.network.chat.FontDescription;
+import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.Style;
+import org.lwjgl.glfw.GLFW;
+
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+
+public final class TerminalScreen extends Screen {
+	private static final FontDescription TERMINAL_FONT = new FontDescription.Resource(Minecraftty.id("terminal"));
+	private static final Style TERMINAL_FONT_STYLE = Style.EMPTY.withFont(TERMINAL_FONT).withoutShadow();
+	private static final int SCREEN_DIM = 0xB0000000;
+	private static final int PANEL_BACKGROUND = 0xE80D1017;
+	private static final int PANEL_BORDER = 0x446E7681;
+	private static final int TERMINAL_BACKGROUND = 0xF20A0D12;
+	private static final int STATUS_BACKGROUND = 0x70000000;
+	private static final int DEFAULT_FOREGROUND = 0xFFE6EDF3;
+	private static final int DEFAULT_BACKGROUND = TERMINAL_BACKGROUND;
+	private static final int OUTER_MARGIN = 14;
+	private static final int PANEL_PADDING = 12;
+	private static final int STATUS_GAP = 8;
+	private static final int[] ANSI = {
+			0xFF1C2128, 0xFFFF6B6B, 0xFF8BD17C, 0xFFF0B45B,
+			0xFF6CB6FF, 0xFFD2A8FF, 0xFF56D4DD, 0xFFD0D7DE,
+			0xFF6E7681, 0xFFFF8787, 0xFFA6E3A1, 0xFFFFD166,
+			0xFF8CCBFF, 0xFFE0B3FF, 0xFF7EE7F2, 0xFFFFFFFF
+	};
+
+	private final Screen parent;
+	private TerminalSession session;
+	private int columns = 80;
+	private int rows = 24;
+	private int charWidth = 8;
+	private int charHeight = 14;
+	private int panelX;
+	private int panelY;
+	private int panelWidth;
+	private int panelHeight;
+	private int terminalX;
+	private int terminalY;
+	private int terminalWidth;
+	private int terminalHeight;
+	private int statusY;
+	private String startupError;
+
+	public TerminalScreen(Screen parent) {
+		super(Component.literal("minecraftty"));
+		this.parent = parent;
+	}
+
+	@Override
+	protected void init() {
+		recalculateTerminalSize();
+		try {
+			session = TerminalManager.getOrStart(columns, rows);
+			startupError = null;
+		} catch (IOException e) {
+			Minecraftty.LOGGER.error("Failed to start terminal", e);
+			startupError = e.getMessage();
+		}
+	}
+
+	@Override
+	public void resize(int width, int height) {
+		super.resize(width, height);
+		recalculateTerminalSize();
+		if (session != null) {
+			session.resize(columns, rows);
+		}
+	}
+
+	private void recalculateTerminalSize() {
+		float fontScale = Math.max(0.75F, Math.min(1.6F, TerminalConfig.fontScale()));
+		charWidth = Math.max(6, Math.round(this.font.width(terminalComponent("W")) * fontScale));
+		charHeight = Math.max(12, Math.round((this.font.lineHeight + 5) * fontScale));
+		panelX = OUTER_MARGIN;
+		panelY = OUTER_MARGIN;
+		panelWidth = Math.max(1, this.width - OUTER_MARGIN * 2);
+		panelHeight = Math.max(1, this.height - OUTER_MARGIN * 2);
+		statusY = panelY + panelHeight - PANEL_PADDING - this.font.lineHeight;
+		terminalX = panelX + PANEL_PADDING;
+		terminalY = panelY + PANEL_PADDING;
+		terminalWidth = Math.max(1, panelWidth - PANEL_PADDING * 2);
+		terminalHeight = Math.max(1, statusY - STATUS_GAP - terminalY);
+		columns = Math.max(20, terminalWidth / charWidth);
+		rows = Math.max(5, terminalHeight / charHeight);
+	}
+
+	@Override
+	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
+		graphics.fill(0, 0, width, height, SCREEN_DIM);
+		graphics.fill(panelX, panelY, panelX + panelWidth, panelY + panelHeight, PANEL_BACKGROUND);
+		graphics.outline(panelX, panelY, panelWidth, panelHeight, PANEL_BORDER);
+		graphics.fill(terminalX - 1, terminalY - 1,
+				terminalX + columns * charWidth + 1,
+				terminalY + rows * charHeight + 1,
+				TERMINAL_BACKGROUND);
+
+		if (startupError != null) {
+			graphics.text(font, "Failed to start shell: " + startupError, terminalX, terminalY, 0xFFFF7777);
+			return;
+		}
+
+		if (session == null) {
+			graphics.text(font, terminalComponent("Starting terminal..."), terminalX, terminalY, DEFAULT_FOREGROUND);
+			return;
+		}
+
+		drawTerminal(graphics);
+		graphics.fill(panelX + 1, statusY - 4, panelX + panelWidth - 1, panelY + panelHeight - 1, STATUS_BACKGROUND);
+		graphics.text(font, statusComponent(), terminalX, statusY, 0xFF87909B);
+		if (session.isClosed()) {
+			graphics.text(font, terminalComponent(Component.translatable("screen.minecraftty.terminal.closed").getString()), terminalX,
+					Math.max(terminalY, statusY - charHeight - 8), 0xFFFFCC66);
+		}
+	}
+
+	private void drawTerminal(GuiGraphicsExtractor graphics) {
+		TerminalTextBuffer buffer = session.textBuffer();
+		buffer.lock();
+		try {
+			for (int row = 0; row < rows; row++) {
+				int y = terminalY + row * charHeight;
+				StringBuilder textRun = new StringBuilder();
+				int textRunStart = 0;
+				TextStyle textRunStyle = null;
+				for (int col = 0; col < columns; col++) {
+					char ch = buffer.getCharAt(col, row);
+					TextStyle style = buffer.getStyleAt(col, row);
+					int fg = foreground(style);
+					int bg = background(style);
+					if (bg != DEFAULT_BACKGROUND) {
+						graphics.fill(terminalX + col * charWidth, y, terminalX + (col + 1) * charWidth, y + charHeight, bg);
+					}
+					if (style != null && style.hasOption(TextStyle.Option.UNDERLINED)) {
+						graphics.fill(terminalX + col * charWidth, y + charHeight - 2,
+								terminalX + (col + 1) * charWidth, y + charHeight - 1, fg);
+					}
+					char printable = ch == 0 ? ' ' : ch;
+					if (textRun.length() == 0) {
+						textRunStart = col;
+						textRunStyle = style;
+						textRun.append(printable);
+					} else if (sameTextStyle(textRunStyle, style)) {
+						textRun.append(printable);
+					} else {
+						drawTextRun(graphics, textRun, textRunStyle, textRunStart, row);
+						textRun.setLength(0);
+						textRunStart = col;
+						textRunStyle = style;
+						textRun.append(printable);
+					}
+				}
+				drawTextRun(graphics, textRun, textRunStyle, textRunStart, row);
+			}
+
+			if (session.display().cursorVisible() && !session.isClosed()) {
+				int cursorCol = Math.max(0, Math.min(columns - 1, session.terminal().getCursorX() - 1));
+				int cursorRow = Math.max(0, Math.min(rows - 1, session.terminal().getCursorY() - 1));
+				int x = terminalX + cursorCol * charWidth;
+				int y = terminalY + cursorRow * charHeight;
+				graphics.fill(x, y, x + charWidth, y + charHeight, 0x55FFFFFF);
+				graphics.outline(x, y, charWidth, charHeight, 0xDDE6EDF3);
+			}
+		} finally {
+			buffer.unlock();
+		}
+	}
+
+	private void drawTextRun(GuiGraphicsExtractor graphics, StringBuilder run, TextStyle style, int startColumn, int row) {
+		if (run.isEmpty()) {
+			return;
+		}
+		int last = run.length() - 1;
+		while (last >= 0 && run.charAt(last) == ' ') {
+			last--;
+		}
+		if (last < 0) {
+			return;
+		}
+		String text = run.substring(0, last + 1);
+		graphics.text(font, terminalComponent(text), terminalX + startColumn * charWidth,
+				terminalY + row * charHeight, foreground(style));
+	}
+
+	private static boolean sameTextStyle(TextStyle left, TextStyle right) {
+		if (left == right) {
+			return true;
+		}
+		if (left == null || right == null) {
+			return false;
+		}
+		return foreground(left) == foreground(right)
+				&& background(left) == background(right)
+				&& left.hasOption(TextStyle.Option.UNDERLINED) == right.hasOption(TextStyle.Option.UNDERLINED);
+	}
+
+	private static int foreground(TextStyle style) {
+		if (style == null) {
+			return DEFAULT_FOREGROUND;
+		}
+		if (style.hasOption(TextStyle.Option.INVERSE)) {
+			return backgroundColor(style.getBackground(), DEFAULT_BACKGROUND);
+		}
+		int color = color(style.getForeground(), DEFAULT_FOREGROUND);
+		if (style.hasOption(TextStyle.Option.DIM)) {
+			return dim(color);
+		}
+		if (style.hasOption(TextStyle.Option.BOLD)) {
+			return brighten(color);
+		}
+		return color;
+	}
+
+	private static int background(TextStyle style) {
+		if (style == null) {
+			return DEFAULT_BACKGROUND;
+		}
+		if (style.hasOption(TextStyle.Option.INVERSE)) {
+			return color(style.getForeground(), DEFAULT_FOREGROUND);
+		}
+		return backgroundColor(style.getBackground(), DEFAULT_BACKGROUND);
+	}
+
+	private static int backgroundColor(TerminalColor terminalColor, int fallback) {
+		return color(terminalColor, fallback);
+	}
+
+	private static int color(TerminalColor terminalColor, int fallback) {
+		if (terminalColor == null) {
+			return fallback;
+		}
+		if (terminalColor.isIndexed()) {
+			int index = terminalColor.getColorIndex();
+			if (index >= 0 && index < ANSI.length) {
+				return ANSI[index];
+			}
+		}
+		com.jediterm.core.Color color = terminalColor.toColor();
+		return 0xFF000000 | (color.getRed() << 16) | (color.getGreen() << 8) | color.getBlue();
+	}
+
+	private static int dim(int color) {
+		int r = ((color >> 16) & 0xFF) / 2;
+		int g = ((color >> 8) & 0xFF) / 2;
+		int b = (color & 0xFF) / 2;
+		return 0xFF000000 | (r << 16) | (g << 8) | b;
+	}
+
+	private static int brighten(int color) {
+		int r = Math.min(255, (int) (((color >> 16) & 0xFF) * 1.2F));
+		int g = Math.min(255, (int) (((color >> 8) & 0xFF) * 1.2F));
+		int b = Math.min(255, (int) ((color & 0xFF) * 1.2F));
+		return 0xFF000000 | (r << 16) | (g << 8) | b;
+	}
+
+	@Override
+	public boolean keyPressed(KeyEvent event) {
+		int keyCode = event.key();
+		int modifiers = event.modifiers();
+		if (keyCode == GLFW.GLFW_KEY_F12) {
+			Minecraft.getInstance().setScreen(parent);
+			return true;
+		}
+		if (session == null || session.isClosed()) {
+			return super.keyPressed(event);
+		}
+
+		byte[] encoded = encodeKey(keyCode, modifiers);
+		if (encoded != null) {
+			session.write(encoded);
+			return true;
+		}
+		return super.keyPressed(event);
+	}
+
+	@Override
+	public boolean charTyped(CharacterEvent event) {
+		if (session == null || session.isClosed()) {
+			return super.charTyped(event);
+		}
+		String typed = event.codepointAsString();
+		if (typed.isEmpty()) {
+			return true;
+		}
+		int chr = typed.codePointAt(0);
+		long window = Minecraft.getInstance().getWindow().handle();
+		int modifiers = GLFW.glfwGetKey(window, GLFW.GLFW_KEY_LEFT_CONTROL) == GLFW.GLFW_PRESS
+				|| GLFW.glfwGetKey(window, GLFW.GLFW_KEY_RIGHT_CONTROL) == GLFW.GLFW_PRESS
+				? GLFW.GLFW_MOD_CONTROL : 0;
+		if ((modifiers & GLFW.GLFW_MOD_CONTROL) != 0) {
+			return true;
+		}
+		session.write(typed);
+		return true;
+	}
+
+	private byte[] encodeKey(int keyCode, int modifiers) {
+		boolean ctrl = (modifiers & GLFW.GLFW_MOD_CONTROL) != 0;
+		if (ctrl) {
+			if (keyCode >= GLFW.GLFW_KEY_A && keyCode <= GLFW.GLFW_KEY_Z) {
+				return new byte[]{(byte) (keyCode - GLFW.GLFW_KEY_A + 1)};
+			}
+			if (keyCode == GLFW.GLFW_KEY_LEFT_BRACKET) {
+				return bytes("\u001B");
+			}
+		}
+
+		return switch (keyCode) {
+			case GLFW.GLFW_KEY_ESCAPE -> bytes("\u001B");
+			case GLFW.GLFW_KEY_ENTER, GLFW.GLFW_KEY_KP_ENTER -> bytes("\r");
+			case GLFW.GLFW_KEY_BACKSPACE -> new byte[]{0x7F};
+			case GLFW.GLFW_KEY_TAB -> bytes("\t");
+			case GLFW.GLFW_KEY_UP -> bytes("\u001B[A");
+			case GLFW.GLFW_KEY_DOWN -> bytes("\u001B[B");
+			case GLFW.GLFW_KEY_RIGHT -> bytes("\u001B[C");
+			case GLFW.GLFW_KEY_LEFT -> bytes("\u001B[D");
+			case GLFW.GLFW_KEY_HOME -> bytes("\u001B[H");
+			case GLFW.GLFW_KEY_END -> bytes("\u001B[F");
+			case GLFW.GLFW_KEY_PAGE_UP -> bytes("\u001B[5~");
+			case GLFW.GLFW_KEY_PAGE_DOWN -> bytes("\u001B[6~");
+			case GLFW.GLFW_KEY_INSERT -> bytes("\u001B[2~");
+			case GLFW.GLFW_KEY_DELETE -> bytes("\u001B[3~");
+			default -> null;
+		};
+	}
+
+	private static byte[] bytes(String text) {
+		return text.getBytes(StandardCharsets.UTF_8);
+	}
+
+	private static MutableComponent terminalComponent(String text) {
+		return Component.literal(text).withStyle(TERMINAL_FONT_STYLE);
+	}
+
+	private static MutableComponent statusComponent() {
+		return Component.translatable("screen.minecraftty.terminal.status").withStyle(Style.EMPTY.withoutShadow());
+	}
+
+	@Override
+	public boolean isPauseScreen() {
+		return false;
+	}
+}

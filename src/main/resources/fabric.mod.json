@@ -1,0 +1,30 @@
+{
+	"schemaVersion": 1,
+	"id": "minecraftty",
+	"version": "${version}",
+	"name": "minecraftty",
+	"description": "Minecraft Terminal",
+	"authors": [
+		"br0b"
+	],
+	"contact": {
+		"sources": "https://example.invalid/minecraftty"
+	},
+	"license": "GPL-3.0-only",
+	"icon": "assets/minecraftty/icon.png",
+	"environment": "client",
+	"entrypoints": {
+		"main": [
+			"dev.br0b.minecraftty.Minecraftty"
+		],
+		"client": [
+			"dev.br0b.minecraftty.client.MinecrafttyClient"
+		]
+	},
+	"depends": {
+		"fabricloader": ">=0.19.3",
+		"minecraft": "~26.1.2",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}
