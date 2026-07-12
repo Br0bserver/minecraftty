@@ -15,6 +15,8 @@ final class PtyTtyConnector implements TtyConnector {
 	private final PtyProcess process;
 	private final InputStreamReader reader;
 	private final OutputStream writer;
+	private String pendingText = "";
+	private char pendingHighSurrogate = 0;
 
 	PtyTtyConnector(PtyProcess process) {
 		this.process = process;
@@ -24,7 +26,32 @@ final class PtyTtyConnector implements TtyConnector {
 
 	@Override
 	public int read(char[] buf, int offset, int length) throws IOException {
-		return reader.read(buf, offset, length);
+		if (pendingText.isEmpty()) {
+			char[] readBuffer = new char[Math.max(1, length)];
+			int read = reader.read(readBuffer, 0, readBuffer.length);
+			if (read < 0) {
+				return read;
+			}
+			pendingText = TerminalGlyphSubstitution.modelText(completeSurrogatePairs(readBuffer, read));
+		}
+		int copied = Math.min(length, pendingText.length());
+		pendingText.getChars(0, copied, buf, offset);
+		pendingText = pendingText.substring(copied);
+		return copied;
+	}
+
+	private String completeSurrogatePairs(char[] readBuffer, int read) {
+		StringBuilder builder = new StringBuilder(read + (pendingHighSurrogate == 0 ? 0 : 1));
+		if (pendingHighSurrogate != 0) {
+			builder.append(pendingHighSurrogate);
+			pendingHighSurrogate = 0;
+		}
+		if (read > 0 && Character.isHighSurrogate(readBuffer[read - 1])) {
+			pendingHighSurrogate = readBuffer[read - 1];
+			read--;
+		}
+		builder.append(readBuffer, 0, read);
+		return builder.toString();
 	}
 
 	@Override

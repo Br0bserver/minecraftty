@@ -53,9 +53,12 @@ public final class TerminalSession implements AutoCloseable {
 		Map<String, String> env = new HashMap<>(System.getenv());
 		env.put("TERM", "xterm-256color");
 		env.put("COLORTERM", "truecolor");
-		env.put("LANG", "C.UTF-8");
-		env.put("LC_ALL", "C.UTF-8");
-		env.put("LC_CTYPE", "C.UTF-8");
+		String locale = preferredUtf8Locale(env);
+		env.put("LANG", locale);
+		env.put("LC_CTYPE", locale);
+		if (!locale.equalsIgnoreCase(env.get("LC_ALL"))) {
+			env.remove("LC_ALL");
+		}
 
 		PtyProcess process = new PtyProcessBuilder(new String[]{shell, "-l"})
 				.setEnvironment(env)
@@ -80,6 +83,40 @@ public final class TerminalSession implements AutoCloseable {
 		);
 		terminal.setTerminalOutput(starter);
 		return new TerminalSession(process, connector, display, textBuffer, terminal, starter, executorServiceManager);
+	}
+
+	private static String preferredUtf8Locale(Map<String, String> env) {
+		String locale = firstUtf8Locale(false, env.get("LANG"), env.get("LC_CTYPE"), env.get("LC_ALL"));
+		if (locale != null) {
+			return locale;
+		}
+		locale = firstUtf8Locale(true, env.get("LC_ALL"), env.get("LC_CTYPE"), env.get("LANG"));
+		return locale == null ? "C.UTF-8" : locale;
+	}
+
+	private static String firstUtf8Locale(boolean allowCLocale, String... locales) {
+		for (String locale : locales) {
+			if (isUtf8Locale(locale) && (allowCLocale || !isCLocale(locale))) {
+				return locale;
+			}
+		}
+		return null;
+	}
+
+	private static boolean isUtf8Locale(String locale) {
+		if (locale == null) {
+			return false;
+		}
+		String normalized = locale.toLowerCase(java.util.Locale.ROOT).replace("-", "");
+		return normalized.contains("utf8");
+	}
+
+	private static boolean isCLocale(String locale) {
+		if (locale == null) {
+			return false;
+		}
+		String normalized = locale.toLowerCase(java.util.Locale.ROOT);
+		return normalized.equals("c.utf-8") || normalized.equals("c.utf8");
 	}
 
 	public TerminalTextBuffer textBuffer() {

@@ -19,6 +19,7 @@ import net.minecraft.network.chat.Style;
 import org.lwjgl.glfw.GLFW;
 
 import java.io.IOException;
+import java.text.Normalizer;
 import java.nio.charset.StandardCharsets;
 
 public final class TerminalScreen extends Screen {
@@ -197,7 +198,7 @@ public final class TerminalScreen extends Screen {
 			String cluster = text.substring(offset, nextOffset);
 			int width = terminalCellWidth(cluster);
 			if (width > 0 && !isBlankCluster(cluster)) {
-				glyphAtlas.draw(graphics, cluster, foreground(style),
+				glyphAtlas.draw(graphics, TerminalGlyphSubstitution.displayText(cluster), foreground(style),
 						terminalX + column * charWidth, terminalY + row * charHeight, width);
 			}
 			column += width;
@@ -390,7 +391,7 @@ public final class TerminalScreen extends Screen {
 	}
 
 	private static String normalizePastedText(String text) {
-		return text.replace("\r\n", "\n").replace('\r', '\n');
+		return Normalizer.normalize(text.replace("\r\n", "\n").replace('\r', '\n'), Normalizer.Form.NFC);
 	}
 
 	@Override
