@@ -2,6 +2,10 @@ package dev.br0b.minecraftty.client.terminal;
 
 import com.jediterm.terminal.TerminalColor;
 import com.jediterm.terminal.TextStyle;
+import com.jediterm.terminal.emulator.mouse.MouseButtonCodes;
+import com.jediterm.terminal.emulator.mouse.MouseButtonModifierFlags;
+import com.jediterm.terminal.emulator.mouse.MouseFormat;
+import com.jediterm.terminal.emulator.mouse.MouseMode;
 import com.jediterm.terminal.model.CharBuffer;
 import com.jediterm.terminal.model.TerminalLine;
 import com.jediterm.terminal.model.TerminalTextBuffer;
@@ -13,14 +17,15 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
-import net.minecraft.network.chat.MutableComponent;
+import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Style;
 import org.lwjgl.glfw.GLFW;
 
 import java.io.IOException;
-import java.text.Normalizer;
 import java.nio.charset.StandardCharsets;
+import java.text.Normalizer;
 
 public final class TerminalScreen extends Screen {
 	private static final int SCREEN_DIM = 0xB0000000;
@@ -33,6 +38,7 @@ public final class TerminalScreen extends Screen {
 	private static final int OUTER_MARGIN = 14;
 	private static final int PANEL_PADDING = 12;
 	private static final int STATUS_GAP = 8;
+	private static final int SCROLLBACK_WHEEL_LINES = 3;
 	private static final int[] ANSI = {
 			0xFF1C2128, 0xFFFF6B6B, 0xFF8BD17C, 0xFFF0B45B,
 			0xFF6CB6FF, 0xFFD2A8FF, 0xFF56D4DD, 0xFFD0D7DE,
@@ -56,6 +62,7 @@ public final class TerminalScreen extends Screen {
 	private int terminalWidth;
 	private int terminalHeight;
 	private int statusY;
+	private int scrollbackOffset;
 	private String startupError;
 
 	public TerminalScreen(Screen parent) {
@@ -80,6 +87,7 @@ public final class TerminalScreen extends Screen {
 	public void resize(int width, int height) {
 		super.resize(width, height);
 		recalculateTerminalSize();
+		clampScrollbackOffset();
 		if (session != null) {
 			session.resize(columns, rows);
 		}
@@ -124,6 +132,7 @@ public final class TerminalScreen extends Screen {
 			return;
 		}
 
+		clampScrollbackOffset();
 		drawTerminal(graphics);
 		graphics.fill(panelX + 1, statusY - 4, panelX + panelWidth - 1, panelY + panelHeight - 1, STATUS_BACKGROUND);
 		graphics.text(font, statusComponent(), terminalX, statusY, 0xFF87909B);
@@ -138,11 +147,12 @@ public final class TerminalScreen extends Screen {
 		buffer.lock();
 		try {
 			for (int row = 0; row < rows; row++) {
-				drawCellStyles(graphics, buffer, row);
-				drawLineText(graphics, buffer.getLine(row), row);
+				int bufferRow = bufferRow(row);
+				drawCellStyles(graphics, buffer, row, bufferRow);
+				drawLineText(graphics, buffer.getLine(bufferRow), row);
 			}
 
-			if (session.display().cursorVisible() && !session.isClosed()) {
+			if (scrollbackOffset == 0 && session.display().cursorVisible() && !session.isClosed()) {
 				int cursorCol = Math.max(0, Math.min(columns - 1, session.terminal().getCursorX() - 1));
 				int cursorRow = Math.max(0, Math.min(rows - 1, session.terminal().getCursorY() - 1));
 				int x = terminalX + cursorCol * charWidth;
@@ -155,10 +165,14 @@ public final class TerminalScreen extends Screen {
 		}
 	}
 
-	private void drawCellStyles(GuiGraphicsExtractor graphics, TerminalTextBuffer buffer, int row) {
+	private int bufferRow(int visibleRow) {
+		return visibleRow - scrollbackOffset;
+	}
+
+	private void drawCellStyles(GuiGraphicsExtractor graphics, TerminalTextBuffer buffer, int row, int bufferRow) {
 		int y = terminalY + row * charHeight;
 		for (int col = 0; col < columns; col++) {
-			TextStyle style = buffer.getStyleAt(col, row);
+			TextStyle style = buffer.getStyleAt(col, bufferRow);
 			int fg = foreground(style);
 			int bg = background(style);
 			int x = terminalX + col * charWidth;
@@ -195,10 +209,10 @@ public final class TerminalScreen extends Screen {
 				continue;
 			}
 
-			int nextOffset = nextTextCluster(text, offset);
+			int nextOffset = TerminalCellWidth.nextCluster(text, offset);
 			String cluster = text.substring(offset, nextOffset);
-			int width = terminalCellWidth(cluster);
-			if (width > 0 && !isBlankCluster(cluster)) {
+			int width = TerminalCellWidth.cells(cluster);
+			if (width > 0 && !TerminalCellWidth.isBlankCluster(cluster)) {
 				glyphAtlas.draw(graphics, TerminalGlyphSubstitution.displayText(cluster), foreground(style),
 						terminalX + column * charWidth, terminalY + row * charHeight, width,
 						charWidth, charHeight);
@@ -207,100 +221,6 @@ public final class TerminalScreen extends Screen {
 			offset = nextOffset;
 		}
 		return column;
-	}
-
-	private static int nextTextCluster(String text, int offset) {
-		int next = offset + Character.charCount(text.codePointAt(offset));
-		while (next < text.length()) {
-			int codePoint = text.codePointAt(next);
-			if (isCombiningOrVariation(codePoint)) {
-				next += Character.charCount(codePoint);
-				continue;
-			}
-			if (codePoint == 0x200D) {
-				next += Character.charCount(codePoint);
-				if (next < text.length()) {
-					next += Character.charCount(text.codePointAt(next));
-				}
-				continue;
-			}
-			if (isRegionalIndicator(text.codePointAt(offset)) && isRegionalIndicator(codePoint)) {
-				next += Character.charCount(codePoint);
-			}
-			break;
-		}
-		return next;
-	}
-
-	private static int terminalCellWidth(String text) {
-		if (isEmojiPresentationCluster(text)) {
-			return 2;
-		}
-		int width = 0;
-		boolean hasJoinerSequence = false;
-		boolean hasRegionalIndicatorPair = false;
-		int regionalIndicators = 0;
-		for (int offset = 0; offset < text.length(); ) {
-			int codePoint = text.codePointAt(offset);
-			if (codePoint == 0x200D) {
-				hasJoinerSequence = true;
-			} else if (isRegionalIndicator(codePoint)) {
-				regionalIndicators++;
-				hasRegionalIndicatorPair = regionalIndicators >= 2;
-				width += 1;
-			} else {
-				width += terminalCellWidth(codePoint);
-			}
-			offset += Character.charCount(codePoint);
-		}
-		if ((hasJoinerSequence || hasRegionalIndicatorPair) && width > 0) {
-			return 2;
-		}
-		return width;
-	}
-
-	private static boolean isEmojiPresentationCluster(String text) {
-		for (int offset = 0; offset < text.length(); ) {
-			int codePoint = text.codePointAt(offset);
-			if ((codePoint >= 0x1F000 && codePoint <= 0x1FAFF)
-					|| (codePoint >= 0xFE00 && codePoint <= 0xFE0F)
-					|| codePoint == 0x200D) {
-				return true;
-			}
-			offset += Character.charCount(codePoint);
-		}
-		return false;
-	}
-
-	private static int terminalCellWidth(int codePoint) {
-		if (isCombiningOrVariation(codePoint)) {
-			return 0;
-		}
-		return CharUtils.isDoubleWidthCharacter(codePoint, false) ? 2 : 1;
-	}
-
-	private static boolean isBlankCluster(String text) {
-		for (int offset = 0; offset < text.length(); ) {
-			int codePoint = text.codePointAt(offset);
-			if (!Character.isWhitespace(codePoint) && !isCombiningOrVariation(codePoint)) {
-				return false;
-			}
-			offset += Character.charCount(codePoint);
-		}
-		return true;
-	}
-
-	private static boolean isCombiningOrVariation(int codePoint) {
-		int type = Character.getType(codePoint);
-		return type == Character.NON_SPACING_MARK
-				|| type == Character.COMBINING_SPACING_MARK
-				|| type == Character.ENCLOSING_MARK
-				|| (codePoint >= 0xFE00 && codePoint <= 0xFE0F)
-				|| (codePoint >= 0xE0100 && codePoint <= 0xE01EF);
-	}
-
-	private static boolean isRegionalIndicator(int codePoint) {
-		return codePoint >= 0x1F1E6 && codePoint <= 0x1F1FF;
 	}
 
 	private static int foreground(TextStyle style) {
@@ -375,12 +295,18 @@ public final class TerminalScreen extends Screen {
 		}
 
 		if (isPasteShortcut(keyCode, modifiers)) {
+			scrollbackOffset = 0;
 			pasteClipboard();
 			return true;
 		}
 
 		byte[] encoded = encodeKey(keyCode, modifiers);
 		if (encoded != null) {
+			if (isScrollbackShortcut(keyCode, modifiers)) {
+				scrollScrollback(keyCode == GLFW.GLFW_KEY_PAGE_UP ? rows - 1 : -(rows - 1));
+				return true;
+			}
+			scrollbackOffset = 0;
 			session.write(encoded);
 			return true;
 		}
@@ -429,8 +355,218 @@ public final class TerminalScreen extends Screen {
 		if ((modifiers & GLFW.GLFW_MOD_CONTROL) != 0) {
 			return true;
 		}
+		scrollbackOffset = 0;
 		session.write(typed);
 		return true;
+	}
+
+	@Override
+	public void mouseMoved(double mouseX, double mouseY) {
+		if (session != null && !session.isClosed()
+				&& session.display().sendsMouseReports()
+				&& isInsideTerminal(mouseX, mouseY)) {
+			sendMouseMotion(terminalColumn(mouseX), terminalRow(mouseY), MouseButtonCodes.RELEASE,
+					terminalMouseModifiers(currentGlfwModifiers()));
+		}
+		super.mouseMoved(mouseX, mouseY);
+	}
+
+	@Override
+	public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+		if (!canSendMouseEvent(event.x(), event.y())) {
+			return super.mouseClicked(event, doubleClick);
+		}
+		int button = terminalMouseButton(event.button());
+		if (button == MouseButtonCodes.NONE) {
+			return super.mouseClicked(event, doubleClick);
+		}
+		setDragging(true);
+		sendMouseButton(terminalColumn(event.x()), terminalRow(event.y()), button,
+				terminalMouseModifiers(event.modifiers()), true);
+		return true;
+	}
+
+	@Override
+	public boolean mouseReleased(MouseButtonEvent event) {
+		if (!canSendMouseEvent(event.x(), event.y())) {
+			setDragging(false);
+			return super.mouseReleased(event);
+		}
+		int button = terminalMouseButton(event.button());
+		if (button == MouseButtonCodes.NONE) {
+			setDragging(false);
+			return super.mouseReleased(event);
+		}
+		sendMouseButton(terminalColumn(event.x()), terminalRow(event.y()), button,
+				terminalMouseModifiers(event.modifiers()), false);
+		setDragging(false);
+		return true;
+	}
+
+	@Override
+	public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
+		if (!canSendMouseEvent(event.x(), event.y())) {
+			return super.mouseDragged(event, dragX, dragY);
+		}
+		int button = terminalMouseButton(event.button());
+		if (button == MouseButtonCodes.NONE) {
+			return super.mouseDragged(event, dragX, dragY);
+		}
+		sendMouseMotion(terminalColumn(event.x()), terminalRow(event.y()), button, terminalMouseModifiers(event.modifiers()));
+		return true;
+	}
+
+	@Override
+	public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+		if (verticalAmount == 0.0D) {
+			return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
+		}
+		if (canSendMouseEvent(mouseX, mouseY)) {
+			int button = verticalAmount > 0.0D ? MouseButtonCodes.SCROLLUP : MouseButtonCodes.SCROLLDOWN;
+			sendMouseWheel(terminalColumn(mouseX), terminalRow(mouseY), button, terminalMouseModifiers(currentGlfwModifiers()));
+			return true;
+		}
+		if (canScrollBack(mouseX, mouseY)) {
+			scrollScrollback(verticalAmount > 0.0D ? SCROLLBACK_WHEEL_LINES : -SCROLLBACK_WHEEL_LINES);
+			return true;
+		}
+		return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
+	}
+
+	private boolean canScrollBack(double mouseX, double mouseY) {
+		return session != null && !session.isClosed()
+				&& !session.display().alternateScreenBuffer()
+				&& isInsideTerminal(mouseX, mouseY);
+	}
+
+	private void scrollScrollback(int lines) {
+		scrollbackOffset += lines;
+		clampScrollbackOffset();
+	}
+
+	private void clampScrollbackOffset() {
+		if (session == null || session.display().alternateScreenBuffer()) {
+			scrollbackOffset = 0;
+			return;
+		}
+		int maxOffset = Math.max(0, session.textBuffer().getHistoryLinesCount());
+		scrollbackOffset = Math.max(0, Math.min(maxOffset, scrollbackOffset));
+	}
+
+	private static boolean isScrollbackShortcut(int keyCode, int modifiers) {
+		return (modifiers & GLFW.GLFW_MOD_SHIFT) != 0
+				&& (keyCode == GLFW.GLFW_KEY_PAGE_UP || keyCode == GLFW.GLFW_KEY_PAGE_DOWN);
+	}
+
+	private boolean canSendMouseEvent(double mouseX, double mouseY) {
+		return session != null && !session.isClosed()
+				&& session.display().sendsMouseReports()
+				&& isInsideTerminal(mouseX, mouseY);
+	}
+
+	private void sendMouseButton(int column, int row, int button, int modifiers, boolean pressed) {
+		MinecrafttyTerminalDisplay display = session.display();
+		if (pressed) {
+			sendMouseReport(button | modifiers, column, row, false);
+			return;
+		}
+		if (display.mouseFormat() == MouseFormat.MOUSE_FORMAT_SGR) {
+			sendMouseReport(button | modifiers, column, row, true);
+		} else {
+			sendMouseReport(MouseButtonCodes.RELEASE | modifiers, column, row, false);
+		}
+	}
+
+	private void sendMouseMotion(int column, int row, int button, int modifiers) {
+		MouseMode mode = session.display().mouseMode();
+		if (mode == MouseMode.MOUSE_REPORTING_ALL_MOTION) {
+			sendMouseReport((button == MouseButtonCodes.RELEASE ? MouseButtonCodes.RELEASE : button)
+					| MouseButtonModifierFlags.MOUSE_BUTTON_MOTION_FLAG | modifiers, column, row, false);
+		} else if (mode == MouseMode.MOUSE_REPORTING_BUTTON_MOTION && button != MouseButtonCodes.RELEASE) {
+			sendMouseReport(button | MouseButtonModifierFlags.MOUSE_BUTTON_MOTION_FLAG | modifiers, column, row, false);
+		}
+	}
+
+	private void sendMouseWheel(int column, int row, int button, int modifiers) {
+		int wheelButton = (button - MouseButtonCodes.SCROLLDOWN)
+				| MouseButtonModifierFlags.MOUSE_BUTTON_SCROLL_FLAG
+				| modifiers;
+		sendMouseReport(wheelButton, column, row, false);
+	}
+
+	private void sendMouseReport(int button, int column, int row, boolean sgrRelease) {
+		int x = column + 1;
+		int y = row + 1;
+		MouseFormat format = session.display().mouseFormat();
+		byte[] report = switch (format) {
+			case MOUSE_FORMAT_SGR -> bytes("\u001B[<" + button + ";" + x + ";" + y + (sgrRelease ? "m" : "M"));
+			case MOUSE_FORMAT_URXVT -> bytes("\u001B[" + (32 + button) + ";" + x + ";" + y + "M");
+			case MOUSE_FORMAT_XTERM_EXT -> mouseReportBytes("\u001B[M", button, x, y, StandardCharsets.UTF_8);
+			case MOUSE_FORMAT_XTERM -> mouseReportBytes("\u001B[M", button, x, y, StandardCharsets.ISO_8859_1);
+		};
+		session.write(report);
+	}
+
+	private static byte[] mouseReportBytes(String prefix, int button, int x, int y, java.nio.charset.Charset charset) {
+		return (prefix + (char) (32 + button) + (char) (32 + x) + (char) (32 + y)).getBytes(charset);
+	}
+
+	private boolean isInsideTerminal(double mouseX, double mouseY) {
+		return mouseX >= terminalX && mouseX < terminalX + columns * charWidth
+				&& mouseY >= terminalY && mouseY < terminalY + rows * charHeight;
+	}
+
+	private int terminalColumn(double mouseX) {
+		return Math.max(0, Math.min(columns - 1, (int) ((mouseX - terminalX) / charWidth)));
+	}
+
+	private int terminalRow(double mouseY) {
+		return Math.max(0, Math.min(rows - 1, (int) ((mouseY - terminalY) / charHeight)));
+	}
+
+	private static int terminalMouseButton(int button) {
+		return switch (button) {
+			case GLFW.GLFW_MOUSE_BUTTON_LEFT -> MouseButtonCodes.LEFT;
+			case GLFW.GLFW_MOUSE_BUTTON_RIGHT -> MouseButtonCodes.RIGHT;
+			case GLFW.GLFW_MOUSE_BUTTON_MIDDLE -> MouseButtonCodes.MIDDLE;
+			default -> MouseButtonCodes.NONE;
+		};
+	}
+
+	private static int terminalMouseModifiers(int modifiers) {
+		int terminalModifiers = 0;
+		if ((modifiers & GLFW.GLFW_MOD_SHIFT) != 0) {
+			terminalModifiers |= MouseButtonModifierFlags.MOUSE_BUTTON_SHIFT_FLAG;
+		}
+		if ((modifiers & GLFW.GLFW_MOD_SUPER) != 0 || (modifiers & GLFW.GLFW_MOD_ALT) != 0) {
+			terminalModifiers |= MouseButtonModifierFlags.MOUSE_BUTTON_META_FLAG;
+		}
+		if ((modifiers & GLFW.GLFW_MOD_CONTROL) != 0) {
+			terminalModifiers |= MouseButtonModifierFlags.MOUSE_BUTTON_CTRL_FLAG;
+		}
+		return terminalModifiers;
+	}
+
+	private static int currentGlfwModifiers() {
+		long window = Minecraft.getInstance().getWindow().handle();
+		int modifiers = 0;
+		if (isKeyPressed(window, GLFW.GLFW_KEY_LEFT_SHIFT) || isKeyPressed(window, GLFW.GLFW_KEY_RIGHT_SHIFT)) {
+			modifiers |= GLFW.GLFW_MOD_SHIFT;
+		}
+		if (isKeyPressed(window, GLFW.GLFW_KEY_LEFT_ALT) || isKeyPressed(window, GLFW.GLFW_KEY_RIGHT_ALT)) {
+			modifiers |= GLFW.GLFW_MOD_ALT;
+		}
+		if (isKeyPressed(window, GLFW.GLFW_KEY_LEFT_SUPER) || isKeyPressed(window, GLFW.GLFW_KEY_RIGHT_SUPER)) {
+			modifiers |= GLFW.GLFW_MOD_SUPER;
+		}
+		if (isKeyPressed(window, GLFW.GLFW_KEY_LEFT_CONTROL) || isKeyPressed(window, GLFW.GLFW_KEY_RIGHT_CONTROL)) {
+			modifiers |= GLFW.GLFW_MOD_CONTROL;
+		}
+		return modifiers;
+	}
+
+	private static boolean isKeyPressed(long window, int key) {
+		return GLFW.glfwGetKey(window, key) == GLFW.GLFW_PRESS;
 	}
 
 	private byte[] encodeKey(int keyCode, int modifiers) {
@@ -467,8 +603,15 @@ public final class TerminalScreen extends Screen {
 		return text.getBytes(StandardCharsets.UTF_8);
 	}
 
-	private static MutableComponent statusComponent() {
-		return Component.translatable("screen.minecraftty.terminal.status").withStyle(Style.EMPTY.withoutShadow());
+	private MutableComponent statusComponent() {
+		if (session == null) {
+			return Component.translatable("screen.minecraftty.terminal.status").withStyle(Style.EMPTY.withoutShadow());
+		}
+		String status = Component.translatable("screen.minecraftty.terminal.status").getString();
+		if (scrollbackOffset > 0) {
+			status += " | history " + scrollbackOffset + "/" + session.textBuffer().getHistoryLinesCount();
+		}
+		return Component.literal(status).withStyle(Style.EMPTY.withoutShadow());
 	}
 
 	@Override

@@ -14,6 +14,9 @@ final class MinecrafttyTerminalDisplay implements TerminalDisplay {
 	private volatile int cursorY = 1;
 	private volatile boolean cursorVisible = true;
 	private volatile boolean bracketedPasteMode = false;
+	private volatile boolean alternateScreenBuffer = false;
+	private volatile MouseMode mouseMode = MouseMode.MOUSE_REPORTING_NONE;
+	private volatile MouseFormat mouseFormat = MouseFormat.MOUSE_FORMAT_XTERM;
 	private volatile String windowTitle = "minecraftty";
 
 	@Override
@@ -45,6 +48,7 @@ final class MinecrafttyTerminalDisplay implements TerminalDisplay {
 
 	@Override
 	public void useAlternateScreenBuffer(boolean enabled) {
+		alternateScreenBuffer = enabled;
 	}
 
 	@Override
@@ -64,10 +68,12 @@ final class MinecrafttyTerminalDisplay implements TerminalDisplay {
 
 	@Override
 	public void terminalMouseModeSet(MouseMode mouseMode) {
+		this.mouseMode = mouseMode;
 	}
 
 	@Override
 	public void setMouseFormat(MouseFormat mouseFormat) {
+		this.mouseFormat = mouseFormat;
 	}
 
 	@Override
@@ -104,5 +110,23 @@ final class MinecrafttyTerminalDisplay implements TerminalDisplay {
 
 	boolean bracketedPasteMode() {
 		return bracketedPasteMode;
+	}
+
+	boolean alternateScreenBuffer() {
+		return alternateScreenBuffer;
+	}
+
+	MouseMode mouseMode() {
+		return mouseMode;
+	}
+
+	MouseFormat mouseFormat() {
+		return mouseFormat;
+	}
+
+	boolean sendsMouseReports() {
+		return mouseMode == MouseMode.MOUSE_REPORTING_NORMAL
+				|| mouseMode == MouseMode.MOUSE_REPORTING_BUTTON_MOTION
+				|| mouseMode == MouseMode.MOUSE_REPORTING_ALL_MOTION;
 	}
 }

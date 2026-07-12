@@ -30,6 +30,29 @@ loom {
 	}
 }
 
+sourceSets {
+	test {
+		compileClasspath += sourceSets.client.output + sourceSets.client.compileClasspath
+		runtimeClasspath += sourceSets.client.output + sourceSets.client.runtimeClasspath
+	}
+}
+
+tasks.register("verifyTerminalCellWidth", JavaExec) {
+	group = "verification"
+	description = "Runs fast terminal cell width policy checks without starting Minecraft."
+	dependsOn testClasses
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = "dev.br0b.minecraftty.client.terminal.TerminalCellWidthVerifier"
+}
+
+tasks.named("check") {
+	dependsOn verifyTerminalCellWidth
+}
+
+tasks.named("test", Test) {
+	failOnNoDiscoveredTests = false
+}
+
 dependencies {
 	// To change the versions see the gradle.properties file
 	minecraft "com.mojang:minecraft:${project.minecraft_version}"
