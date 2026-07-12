@@ -355,12 +355,42 @@ public final class TerminalScreen extends Screen {
 			return super.keyPressed(event);
 		}
 
+		if (isPasteShortcut(keyCode, modifiers)) {
+			pasteClipboard();
+			return true;
+		}
+
 		byte[] encoded = encodeKey(keyCode, modifiers);
 		if (encoded != null) {
 			session.write(encoded);
 			return true;
 		}
 		return super.keyPressed(event);
+	}
+
+	private void pasteClipboard() {
+		String clipboard = Minecraft.getInstance().keyboardHandler.getClipboard();
+		if (clipboard == null || clipboard.isEmpty()) {
+			return;
+		}
+		String text = normalizePastedText(clipboard);
+		if (session.display().bracketedPasteMode()) {
+			session.write("\u001B[200~" + text + "\u001B[201~");
+		} else {
+			session.write(text.replace('\n', '\r'));
+		}
+	}
+
+	private static boolean isPasteShortcut(int keyCode, int modifiers) {
+		boolean ctrl = (modifiers & GLFW.GLFW_MOD_CONTROL) != 0;
+		boolean shift = (modifiers & GLFW.GLFW_MOD_SHIFT) != 0;
+		boolean superKey = (modifiers & GLFW.GLFW_MOD_SUPER) != 0;
+		return (keyCode == GLFW.GLFW_KEY_V && (superKey || (ctrl && shift)))
+				|| (keyCode == GLFW.GLFW_KEY_INSERT && shift);
+	}
+
+	private static String normalizePastedText(String text) {
+		return text.replace("\r\n", "\n").replace('\r', '\n');
 	}
 
 	@Override

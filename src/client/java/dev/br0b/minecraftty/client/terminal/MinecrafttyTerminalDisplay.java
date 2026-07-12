@@ -13,6 +13,7 @@ final class MinecrafttyTerminalDisplay implements TerminalDisplay {
 	private volatile int cursorX = 1;
 	private volatile int cursorY = 1;
 	private volatile boolean cursorVisible = true;
+	private volatile boolean bracketedPasteMode = false;
 	private volatile String windowTitle = "minecraftty";
 
 	@Override
@@ -75,6 +76,11 @@ final class MinecrafttyTerminalDisplay implements TerminalDisplay {
 	}
 
 	@Override
+	public void setBracketedPasteMode(boolean enabled) {
+		bracketedPasteMode = enabled;
+	}
+
+	@Override
 	public Color getWindowForeground() {
 		return new Color(0xD0, 0xD0, 0xD0);
 	}
@@ -94,5 +100,9 @@ final class MinecrafttyTerminalDisplay implements TerminalDisplay {
 
 	boolean cursorVisible() {
 		return cursorVisible;
+	}
+
+	boolean bracketedPasteMode() {
+		return bracketedPasteMode;
 	}
 }
