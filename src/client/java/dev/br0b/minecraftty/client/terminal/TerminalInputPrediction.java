@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 
 final class TerminalInputPrediction implements TypeAheadTerminalModel {
 	private static final int MAX_PENDING_STATES = 256;
@@ -17,13 +18,20 @@ final class TerminalInputPrediction implements TypeAheadTerminalModel {
 	private final TerminalTextBuffer textBuffer;
 	private final MinecrafttyTerminalDisplay display;
 	private final ShellType shellType;
+	private final BooleanSupplier enabled;
 	private final ArrayDeque<State> pendingStates = new ArrayDeque<>();
 	private int leftmostCursorX = -1;
 
 	TerminalInputPrediction(TerminalTextBuffer textBuffer, MinecrafttyTerminalDisplay display, String shell) {
+		this(textBuffer, display, shell, () -> true);
+	}
+
+	TerminalInputPrediction(TerminalTextBuffer textBuffer, MinecrafttyTerminalDisplay display, String shell,
+			BooleanSupplier enabled) {
 		this.textBuffer = textBuffer;
 		this.display = display;
 		this.shellType = TypeAheadTerminalModel.commandLineToShellType(List.of(shell));
+		this.enabled = enabled;
 	}
 
 	synchronized void onUserInput(byte[] bytes) {
@@ -264,7 +272,8 @@ final class TerminalInputPrediction implements TypeAheadTerminalModel {
 	}
 
 	private boolean canPredict() {
-		return !isUsingAlternateBuffer() && !display.sendsMouseReports() && display.cursorVisible();
+		return enabled.getAsBoolean()
+				&& !isUsingAlternateBuffer() && !display.sendsMouseReports() && display.cursorVisible();
 	}
 
 	private static Action action(byte[] bytes) {

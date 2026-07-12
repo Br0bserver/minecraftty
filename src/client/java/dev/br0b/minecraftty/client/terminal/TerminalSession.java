@@ -9,6 +9,7 @@ import com.jediterm.terminal.model.StyleState;
 import com.jediterm.terminal.model.TerminalTextBuffer;
 import com.pty4j.PtyProcess;
 import com.pty4j.PtyProcessBuilder;
+import dev.br0b.minecraftty.client.TerminalConfig;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -77,7 +78,8 @@ public final class TerminalSession implements AutoCloseable {
 		StyleState styleState = new StyleState();
 		TerminalTextBuffer textBuffer = new TerminalTextBuffer(columns, rows, styleState, HISTORY_LINES);
 		JediTerminal terminal = new JediTerminal(display, textBuffer, styleState);
-		TerminalInputPrediction inputPrediction = new TerminalInputPrediction(textBuffer, display, shell);
+		TerminalInputPrediction inputPrediction = new TerminalInputPrediction(textBuffer, display, shell,
+				TerminalConfig::inputPrediction);
 		MinecrafttyExecutorServiceManager executorServiceManager = new MinecrafttyExecutorServiceManager();
 		TerminalStarter starter = new MinecrafttyTerminalStarter(
 				terminal,

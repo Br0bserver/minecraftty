@@ -15,6 +15,7 @@ public final class TerminalInputPredictionVerifier {
 		consumesEchoOneStateAtATime();
 		predictsBackspaceAndMovement();
 		disabledInAlternateBuffer();
+		disabledByConfiguration();
 		rawInputClearsPrediction();
 	}
 
@@ -69,12 +70,27 @@ public final class TerminalInputPredictionVerifier {
 		fixture.expectOverlay("raw input", false, 2, 0, "");
 	}
 
+	private static void disabledByConfiguration() {
+		Fixture fixture = new Fixture(false);
+		fixture.writeTerminal("$ ");
+		fixture.predict("a");
+		fixture.expectOverlay("configuration", false, 2, 0, "");
+	}
+
 	private static final class Fixture {
 		private final MinecrafttyTerminalDisplay display = new MinecrafttyTerminalDisplay();
 		private final StyleState styleState = new StyleState();
 		private final TerminalTextBuffer textBuffer = new TerminalTextBuffer(80, 24, styleState, 100);
 		private final JediTerminal terminal = new JediTerminal(display, textBuffer, styleState);
-		private final TerminalInputPrediction prediction = new TerminalInputPrediction(textBuffer, display, "/bin/zsh");
+		private final TerminalInputPrediction prediction;
+
+		private Fixture() {
+			this(true);
+		}
+
+		private Fixture(boolean predictionEnabled) {
+			prediction = new TerminalInputPrediction(textBuffer, display, "/bin/zsh", () -> predictionEnabled);
+		}
 
 		private void writeTerminal(String text) {
 			terminal.writeCharacters(text);

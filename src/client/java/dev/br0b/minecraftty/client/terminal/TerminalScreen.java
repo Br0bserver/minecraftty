@@ -12,6 +12,7 @@ import com.jediterm.terminal.model.TerminalSelection;
 import com.jediterm.terminal.model.TerminalTextBuffer;
 import dev.br0b.minecraftty.Minecraftty;
 import dev.br0b.minecraftty.client.TerminalConfig;
+import dev.br0b.minecraftty.client.TerminalConfigScreen;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
@@ -29,12 +30,11 @@ import java.text.Normalizer;
 
 public final class TerminalScreen extends Screen {
 	private static final int SCREEN_DIM = 0xB0000000;
-	private static final int PANEL_BACKGROUND = 0xE80D1017;
+	private static final int PANEL_BACKGROUND_RGB = 0x000D1017;
 	private static final int PANEL_BORDER = 0x446E7681;
-	private static final int TERMINAL_BACKGROUND = 0xF20A0D12;
+	private static final int TERMINAL_BACKGROUND_RGB = 0x000A0D12;
 	private static final int STATUS_BACKGROUND = 0x70000000;
 	private static final int DEFAULT_FOREGROUND = 0xFFE6EDF3;
-	private static final int DEFAULT_BACKGROUND = TERMINAL_BACKGROUND;
 	private static final int PREDICTION_FOREGROUND = 0xFF6E7681;
 	private static final int SELECTION_BACKGROUND = 0x663B82F6;
 	private static final int OUTER_MARGIN = 14;
@@ -85,6 +85,7 @@ public final class TerminalScreen extends Screen {
 	@Override
 	protected void init() {
 		glyphAtlas = TerminalGlyphAtlas.get();
+		renderCache.clear();
 		recalculateTerminalSize();
 		try {
 			session = TerminalManager.getOrStart(columns, rows);
@@ -108,14 +109,17 @@ public final class TerminalScreen extends Screen {
 	}
 
 	private void recalculateTerminalSize() {
-		float fontScale = Math.max(0.75F, Math.min(1.6F, TerminalConfig.fontScale()));
+		float fontScale = TerminalConfig.fontScale();
 		TerminalGlyphAtlas atlas = TerminalGlyphAtlas.get();
 		charWidth = Math.max(6, Math.round(atlas.cellWidth() * fontScale));
 		charHeight = Math.max(12, Math.round(atlas.cellHeight() * fontScale));
-		panelX = OUTER_MARGIN;
-		panelY = OUTER_MARGIN;
-		panelWidth = Math.max(1, this.width - OUTER_MARGIN * 2);
-		panelHeight = Math.max(1, this.height - OUTER_MARGIN * 2);
+		float terminalScale = TerminalConfig.terminalScale();
+		int availableWidth = Math.max(1, this.width - OUTER_MARGIN * 2);
+		int availableHeight = Math.max(1, this.height - OUTER_MARGIN * 2);
+		panelWidth = Math.max(1, Math.round(availableWidth * terminalScale));
+		panelHeight = Math.max(1, Math.round(availableHeight * terminalScale));
+		panelX = (this.width - panelWidth) / 2;
+		panelY = (this.height - panelHeight) / 2;
 		statusY = panelY + panelHeight - PANEL_PADDING - this.font.lineHeight;
 		terminalX = panelX + PANEL_PADDING;
 		terminalY = panelY + PANEL_PADDING;
@@ -128,12 +132,13 @@ public final class TerminalScreen extends Screen {
 	@Override
 	public void extractRenderState(GuiGraphicsExtractor graphics, int mouseX, int mouseY, float delta) {
 		graphics.fill(0, 0, width, height, SCREEN_DIM);
-		graphics.fill(panelX, panelY, panelX + panelWidth, panelY + panelHeight, PANEL_BACKGROUND);
+		graphics.fill(panelX, panelY, panelX + panelWidth, panelY + panelHeight,
+				withOpacity(PANEL_BACKGROUND_RGB, TerminalConfig.backgroundOpacity()));
 		graphics.outline(panelX, panelY, panelWidth, panelHeight, PANEL_BORDER);
 		graphics.fill(terminalX - 1, terminalY - 1,
 				terminalX + columns * charWidth + 1,
 				terminalY + rows * charHeight + 1,
-				TERMINAL_BACKGROUND);
+				defaultBackground());
 
 		if (startupError != null) {
 			graphics.text(font, "Failed to start shell: " + startupError, terminalX, terminalY, 0xFFFF7777);
@@ -260,7 +265,7 @@ public final class TerminalScreen extends Screen {
 			return DEFAULT_FOREGROUND;
 		}
 		if (style.hasOption(TextStyle.Option.INVERSE)) {
-			return backgroundColor(style.getBackground(), DEFAULT_BACKGROUND);
+			return backgroundColor(style.getBackground(), defaultBackground());
 		}
 		int color = color(style.getForeground(), DEFAULT_FOREGROUND);
 		if (style.hasOption(TextStyle.Option.DIM)) {
@@ -274,12 +279,12 @@ public final class TerminalScreen extends Screen {
 
 	static int background(TextStyle style) {
 		if (style == null) {
-			return DEFAULT_BACKGROUND;
+			return defaultBackground();
 		}
 		if (style.hasOption(TextStyle.Option.INVERSE)) {
-			return color(style.getForeground(), DEFAULT_FOREGROUND);
+			return withOpacity(color(style.getForeground(), DEFAULT_FOREGROUND), TerminalConfig.backgroundOpacity());
 		}
-		return backgroundColor(style.getBackground(), DEFAULT_BACKGROUND);
+		return withOpacity(color(style.getBackground(), defaultBackground()), TerminalConfig.backgroundOpacity());
 	}
 
 	private static int backgroundColor(TerminalColor terminalColor, int fallback) {
@@ -315,7 +320,11 @@ public final class TerminalScreen extends Screen {
 	}
 
 	static int defaultBackground() {
-		return DEFAULT_BACKGROUND;
+		return withOpacity(TERMINAL_BACKGROUND_RGB, TerminalConfig.backgroundOpacity());
+	}
+
+	private static int withOpacity(int rgb, float opacity) {
+		return (Math.round(opacity * 255.0F) << 24) | (rgb & 0x00FFFFFF);
 	}
 
 	@Override
@@ -324,6 +333,10 @@ public final class TerminalScreen extends Screen {
 		int modifiers = event.modifiers();
 		if (keyCode == GLFW.GLFW_KEY_F12) {
 			Minecraft.getInstance().setScreen(parent);
+			return true;
+		}
+		if (keyCode == GLFW.GLFW_KEY_F10) {
+			Minecraft.getInstance().setScreen(new TerminalConfigScreen(this));
 			return true;
 		}
 		if (session == null || session.isClosed()) {
