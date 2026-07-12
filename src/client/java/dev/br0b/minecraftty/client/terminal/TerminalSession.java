@@ -23,19 +23,22 @@ public final class TerminalSession implements AutoCloseable {
 	private final MinecrafttyTerminalDisplay display;
 	private final TerminalTextBuffer textBuffer;
 	private final JediTerminal terminal;
+	private final TerminalInputPrediction inputPrediction;
 	private final TerminalStarter starter;
 	private final MinecrafttyExecutorServiceManager executorServiceManager;
 	private final Thread emulatorThread;
 	private volatile boolean closed;
 
 	private TerminalSession(PtyProcess process, PtyTtyConnector connector, MinecrafttyTerminalDisplay display,
-							TerminalTextBuffer textBuffer, JediTerminal terminal, TerminalStarter starter,
+							TerminalTextBuffer textBuffer, JediTerminal terminal, TerminalInputPrediction inputPrediction,
+							TerminalStarter starter,
 							MinecrafttyExecutorServiceManager executorServiceManager) {
 		this.process = process;
 		this.connector = connector;
 		this.display = display;
 		this.textBuffer = textBuffer;
 		this.terminal = terminal;
+		this.inputPrediction = inputPrediction;
 		this.starter = starter;
 		this.executorServiceManager = executorServiceManager;
 		this.emulatorThread = new Thread(() -> {
@@ -74,6 +77,7 @@ public final class TerminalSession implements AutoCloseable {
 		StyleState styleState = new StyleState();
 		TerminalTextBuffer textBuffer = new TerminalTextBuffer(columns, rows, styleState, HISTORY_LINES);
 		JediTerminal terminal = new JediTerminal(display, textBuffer, styleState);
+		TerminalInputPrediction inputPrediction = new TerminalInputPrediction(textBuffer, display, shell);
 		MinecrafttyExecutorServiceManager executorServiceManager = new MinecrafttyExecutorServiceManager();
 		TerminalStarter starter = new MinecrafttyTerminalStarter(
 				terminal,
@@ -83,7 +87,8 @@ public final class TerminalSession implements AutoCloseable {
 				executorServiceManager
 		);
 		terminal.setTerminalOutput(starter);
-		return new TerminalSession(process, connector, display, textBuffer, terminal, starter, executorServiceManager);
+		return new TerminalSession(process, connector, display, textBuffer, terminal, inputPrediction, starter,
+				executorServiceManager);
 	}
 
 	static void removeHostTerminalImageCapabilityEnv(Map<String, String> env) {
@@ -152,6 +157,10 @@ public final class TerminalSession implements AutoCloseable {
 		return display;
 	}
 
+	public TerminalInputPrediction inputPrediction() {
+		return inputPrediction;
+	}
+
 	public boolean isClosed() {
 		return closed || !process.isRunning();
 	}
@@ -166,13 +175,30 @@ public final class TerminalSession implements AutoCloseable {
 	}
 
 	public void write(String text) {
-		write(text.getBytes(StandardCharsets.UTF_8));
+		writeRaw(text);
 	}
 
 	public void write(byte[] bytes) {
+		writeRaw(bytes);
+	}
+
+	public void writeUserInput(byte[] bytes) {
 		if (isClosed()) {
 			return;
 		}
+		inputPrediction.onUserInput(bytes);
+		starter.sendBytes(bytes, false);
+	}
+
+	public void writeRaw(String text) {
+		writeRaw(text.getBytes(StandardCharsets.UTF_8));
+	}
+
+	public void writeRaw(byte[] bytes) {
+		if (isClosed()) {
+			return;
+		}
+		inputPrediction.onRawInput();
 		starter.sendBytes(bytes, false);
 	}
 

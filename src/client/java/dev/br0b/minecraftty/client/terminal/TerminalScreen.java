@@ -33,6 +33,7 @@ public final class TerminalScreen extends Screen {
 	private static final int STATUS_BACKGROUND = 0x70000000;
 	private static final int DEFAULT_FOREGROUND = 0xFFE6EDF3;
 	private static final int DEFAULT_BACKGROUND = TERMINAL_BACKGROUND;
+	private static final int PREDICTION_FOREGROUND = 0xFF6E7681;
 	private static final int OUTER_MARGIN = 14;
 	private static final int PANEL_PADDING = 12;
 	private static final int STATUS_GAP = 8;
@@ -157,16 +158,43 @@ public final class TerminalScreen extends Screen {
 			}
 
 			if (scrollbackOffset == 0 && session.display().cursorVisible() && !session.isClosed()) {
-				int cursorCol = Math.max(0, Math.min(columns - 1, session.terminal().getCursorX() - 1));
-				int cursorRow = Math.max(0, Math.min(rows - 1, session.terminal().getCursorY() - 1));
-				int x = terminalX + cursorCol * charWidth;
-				int y = terminalY + cursorRow * charHeight;
-				graphics.fill(x, y, x + charWidth, y + charHeight, 0x55FFFFFF);
-				graphics.outline(x, y, charWidth, charHeight, 0xDDE6EDF3);
+				TerminalInputPrediction.State actual = session.inputPrediction().actualState();
+				TerminalInputPrediction.Overlay overlay = session.inputPrediction().overlay(actual);
+				drawPrediction(graphics, overlay);
+				drawCursor(graphics, actual, overlay);
 			}
 		} finally {
 			buffer.unlock();
 		}
+	}
+
+	private void drawPrediction(GuiGraphicsExtractor graphics, TerminalInputPrediction.Overlay overlay) {
+		if (!overlay.visible() || overlay.text().isEmpty() || overlay.row() < 0 || overlay.row() >= rows) {
+			return;
+		}
+		int column = Math.max(0, Math.min(columns - 1, overlay.textColumn()));
+		String text = overlay.text();
+		int cells = Math.min(text.length(), columns - column);
+		if (cells <= 0) {
+			return;
+		}
+		if (cells < text.length()) {
+			text = text.substring(0, cells);
+		}
+		glyphAtlas.draw(graphics, text, PREDICTION_FOREGROUND, terminalX + column * charWidth,
+				terminalY + overlay.row() * charHeight, cells, charWidth, charHeight);
+	}
+
+	private void drawCursor(GuiGraphicsExtractor graphics, TerminalInputPrediction.State actual,
+			TerminalInputPrediction.Overlay overlay) {
+		int cursorCol = overlay.visible() ? overlay.cursorX() : actual.cursorX();
+		int cursorRow = actual.cursorY() - 1;
+		cursorCol = Math.max(0, Math.min(columns - 1, cursorCol));
+		cursorRow = Math.max(0, Math.min(rows - 1, cursorRow));
+		int x = terminalX + cursorCol * charWidth;
+		int y = terminalY + cursorRow * charHeight;
+		graphics.fill(x, y, x + charWidth, y + charHeight, 0x55FFFFFF);
+		graphics.outline(x, y, charWidth, charHeight, 0xDDE6EDF3);
 	}
 
 	private int bufferRow(int visibleRow) {
@@ -261,7 +289,7 @@ public final class TerminalScreen extends Screen {
 				return true;
 			}
 			scrollbackOffset = 0;
-			session.write(encoded);
+			session.writeUserInput(encoded);
 			return true;
 		}
 		return super.keyPressed(event);
@@ -274,9 +302,9 @@ public final class TerminalScreen extends Screen {
 		}
 		String text = normalizePastedText(clipboard);
 		if (session.display().bracketedPasteMode()) {
-			session.write("\u001B[200~" + text + "\u001B[201~");
+			session.writeRaw("\u001B[200~" + text + "\u001B[201~");
 		} else {
-			session.write(text.replace('\n', '\r'));
+			session.writeRaw(text.replace('\n', '\r'));
 		}
 	}
 
@@ -310,7 +338,7 @@ public final class TerminalScreen extends Screen {
 			return true;
 		}
 		scrollbackOffset = 0;
-		session.write(typed);
+		session.writeUserInput(bytes(typed));
 		return true;
 	}
 
@@ -458,7 +486,7 @@ public final class TerminalScreen extends Screen {
 			case MOUSE_FORMAT_XTERM_EXT -> mouseReportBytes("\u001B[M", button, x, y, StandardCharsets.UTF_8);
 			case MOUSE_FORMAT_XTERM -> mouseReportBytes("\u001B[M", button, x, y, StandardCharsets.ISO_8859_1);
 		};
-		session.write(report);
+		session.writeRaw(report);
 	}
 
 	private static byte[] mouseReportBytes(String prefix, int button, int x, int y, java.nio.charset.Charset charset) {

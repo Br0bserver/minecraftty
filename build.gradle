@@ -53,9 +53,18 @@ tasks.register("verifyTerminalImageProtocolFilter", JavaExec) {
 	mainClass = "dev.br0b.minecraftty.client.terminal.TerminalImageProtocolFilterVerifier"
 }
 
+tasks.register("verifyTerminalInputPrediction", JavaExec) {
+	group = "verification"
+	description = "Runs fast terminal input prediction checks without starting Minecraft."
+	dependsOn testClasses
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = "dev.br0b.minecraftty.client.terminal.TerminalInputPredictionVerifier"
+}
+
 tasks.named("check") {
 	dependsOn verifyTerminalCellWidth
 	dependsOn verifyTerminalImageProtocolFilter
+	dependsOn verifyTerminalInputPrediction
 }
 
 tasks.named("test", Test) {
