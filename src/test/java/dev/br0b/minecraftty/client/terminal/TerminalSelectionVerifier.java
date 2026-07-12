@@ -2,7 +2,6 @@ package dev.br0b.minecraftty.client.terminal;
 
 import com.jediterm.core.compatibility.Point;
 import com.jediterm.terminal.model.JediTerminal;
-import com.jediterm.terminal.model.SelectionUtil;
 import com.jediterm.terminal.model.StyleState;
 import com.jediterm.terminal.model.TerminalSelection;
 import com.jediterm.terminal.model.TerminalTextBuffer;
@@ -14,9 +13,14 @@ public final class TerminalSelectionVerifier {
 	public static void main(String[] args) {
 		selectsSingleLine();
 		selectsMultipleLines();
+		selectsReversedRange();
 		selectsHistoryLines();
 		preservesWrappedLines();
 		removesDoubleWidthPlaceholders();
+		selectsWord();
+		selectsLine();
+		ignoresEmptyLineSelection();
+		selectsHistoryLine();
 	}
 
 	private static void selectsSingleLine() {
@@ -31,6 +35,14 @@ public final class TerminalSelectionVerifier {
 		fixture.newLine();
 		fixture.write("beta");
 		fixture.expect("multi line", point(2, 0), point(2, 1), "pha\nbe");
+	}
+
+	private static void selectsReversedRange() {
+		Fixture fixture = new Fixture(20, 4);
+		fixture.write("alpha");
+		fixture.newLine();
+		fixture.write("beta");
+		fixture.expect("reversed", point(2, 1), point(2, 0), "pha\nbe");
 	}
 
 	private static void selectsHistoryLines() {
@@ -58,6 +70,37 @@ public final class TerminalSelectionVerifier {
 		fixture.expect("wide", point(0, 0), point(3, 0), "\u754C!");
 	}
 
+	private static void selectsWord() {
+		Fixture fixture = new Fixture(20, 4);
+		fixture.write("alpha beta");
+		fixture.expectSelection("word alpha", TerminalSelectionUtil.wordSelection(point(1, 0), fixture.buffer), "alpha");
+		fixture.expectSelection("word beta", TerminalSelectionUtil.wordSelection(point(7, 0), fixture.buffer), "beta");
+	}
+
+	private static void selectsLine() {
+		Fixture fixture = new Fixture(20, 4);
+		fixture.write("line text");
+		fixture.expectSelection("line", TerminalSelectionUtil.lineSelection(point(3, 0), fixture.buffer), "line text");
+	}
+
+	private static void ignoresEmptyLineSelection() {
+		Fixture fixture = new Fixture(20, 4);
+		if (TerminalSelectionUtil.lineSelection(point(0, 0), fixture.buffer) != null) {
+			throw new AssertionError("empty line: expected no selection");
+		}
+	}
+
+	private static void selectsHistoryLine() {
+		Fixture fixture = new Fixture(20, 2);
+		fixture.write("older");
+		fixture.newLine();
+		fixture.write("newer");
+		fixture.newLine();
+		fixture.write("live");
+		fixture.expectSelection("history line", TerminalSelectionUtil.lineSelection(point(1, -1), fixture.buffer),
+				"older");
+	}
+
 	private static Point point(int x, int y) {
 		return new Point(x, y);
 	}
@@ -82,7 +125,11 @@ public final class TerminalSelectionVerifier {
 		}
 
 		private void expect(String name, Point start, Point end, String expected) {
-			String actual = SelectionUtil.getSelectionText(new TerminalSelection(start, end), buffer);
+			expectSelection(name, new TerminalSelection(start, end), expected);
+		}
+
+		private void expectSelection(String name, TerminalSelection selection, String expected) {
+			String actual = TerminalSelectionUtil.selectionText(selection, buffer);
 			if (!actual.equals(expected)) {
 				throw new AssertionError(name + ": expected " + describe(expected) + ", got " + describe(actual));
 			}

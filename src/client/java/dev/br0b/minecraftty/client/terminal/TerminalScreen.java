@@ -7,7 +7,6 @@ import com.jediterm.terminal.emulator.mouse.MouseButtonCodes;
 import com.jediterm.terminal.emulator.mouse.MouseButtonModifierFlags;
 import com.jediterm.terminal.emulator.mouse.MouseFormat;
 import com.jediterm.terminal.emulator.mouse.MouseMode;
-import com.jediterm.terminal.model.SelectionUtil;
 import com.jediterm.terminal.model.TerminalLine;
 import com.jediterm.terminal.model.TerminalSelection;
 import com.jediterm.terminal.model.TerminalTextBuffer;
@@ -42,6 +41,9 @@ public final class TerminalScreen extends Screen {
 	private static final int PANEL_PADDING = 12;
 	private static final int STATUS_GAP = 8;
 	private static final int SCROLLBACK_WHEEL_LINES = 3;
+	private static final int SELECTION_SCROLL_EDGE_ROWS = 1;
+	private static final long CLICK_CHAIN_MS = 500L;
+	private static final long COPY_STATUS_MS = 1_500L;
 	private static final int[] ANSI = {
 			0xFF1C2128, 0xFFFF6B6B, 0xFF8BD17C, 0xFFF0B45B,
 			0xFF6CB6FF, 0xFFD2A8FF, 0xFF56D4DD, 0xFFD0D7DE,
@@ -69,6 +71,10 @@ public final class TerminalScreen extends Screen {
 	private int scrollbackOffset;
 	private boolean selecting;
 	private Point selectionAnchor;
+	private Point lastSelectionClickPoint;
+	private long lastSelectionClickTimeMs;
+	private int selectionClickCount;
+	private long copyStatusUntilMs;
 	private String startupError;
 
 	public TerminalScreen(Screen parent) {
@@ -189,10 +195,10 @@ public final class TerminalScreen extends Screen {
 
 		Point start = new Point(selection.getStart());
 		Point end = new Point(selection.getEnd());
-		if (comparePoints(start, end) == 0) {
+		if (TerminalSelectionUtil.compare(start, end) == 0) {
 			return;
 		}
-		if (comparePoints(start, end) > 0) {
+		if (TerminalSelectionUtil.compare(start, end) > 0) {
 			Point swap = start;
 			start = end;
 			end = swap;
@@ -378,20 +384,21 @@ public final class TerminalScreen extends Screen {
 	}
 
 	private void copySelection() {
-		TerminalSelection selection = session.display().getSelection();
-		if (selection == null || selection.getEnd() == null || comparePoints(selection.getStart(), selection.getEnd()) == 0) {
-			return;
-		}
 		TerminalTextBuffer buffer = session.textBuffer();
 		buffer.lock();
 		try {
-			String text = SelectionUtil.getSelectionText(selection, buffer);
+			String text = TerminalSelectionUtil.selectionText(session.display().getSelection(), buffer);
 			if (!text.isEmpty()) {
 				Minecraft.getInstance().keyboardHandler.setClipboard(text);
+				showCopyStatus();
 			}
 		} finally {
 			buffer.unlock();
 		}
+	}
+
+	private void showCopyStatus() {
+		copyStatusUntilMs = System.currentTimeMillis() + COPY_STATUS_MS;
 	}
 
 	private static String normalizePastedText(String text) {
@@ -435,7 +442,15 @@ public final class TerminalScreen extends Screen {
 	@Override
 	public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
 		if (canStartSelection(event)) {
-			startSelection(event.x(), event.y());
+			Point point = selectionPoint(event.x(), event.y(), false);
+			int clickCount = selectionClickCount(point, doubleClick);
+			if (clickCount >= 3) {
+				selectLineAt(point);
+			} else if (clickCount == 2) {
+				selectWordAt(point);
+			} else {
+				startSelection(point);
+			}
 			return true;
 		}
 		if (!canSendMouseEvent(event.x(), event.y())) {
@@ -525,24 +540,75 @@ public final class TerminalScreen extends Screen {
 				&& (!session.display().sendsMouseReports() || (event.modifiers() & GLFW.GLFW_MOD_SHIFT) != 0);
 	}
 
-	private void startSelection(double mouseX, double mouseY) {
-		selectionAnchor = selectionPoint(mouseX, mouseY, false);
+	private void startSelection(Point point) {
+		selectionAnchor = point;
 		session.display().setSelection(new TerminalSelection(selectionAnchor, new Point(selectionAnchor)));
 		selecting = true;
 		setDragging(true);
+	}
+
+	private int selectionClickCount(Point point, boolean doubleClick) {
+		long now = System.currentTimeMillis();
+		boolean sameCell = lastSelectionClickPoint != null && lastSelectionClickPoint.equals(point);
+		if (!sameCell || now - lastSelectionClickTimeMs > CLICK_CHAIN_MS) {
+			selectionClickCount = 1;
+		} else {
+			selectionClickCount++;
+		}
+		if (doubleClick && selectionClickCount < 2) {
+			selectionClickCount = 2;
+		}
+		selectionClickCount = Math.min(selectionClickCount, 3);
+		lastSelectionClickPoint = new Point(point);
+		lastSelectionClickTimeMs = now;
+		return selectionClickCount;
+	}
+
+	private void selectWordAt(Point point) {
+		TerminalTextBuffer buffer = session.textBuffer();
+		buffer.lock();
+		try {
+			TerminalSelection selection = TerminalSelectionUtil.wordSelection(point, buffer);
+			if (selection == null) {
+				clearSelection();
+			} else {
+				session.display().setSelection(selection);
+			}
+		} finally {
+			buffer.unlock();
+		}
+		selecting = false;
+		setDragging(false);
+	}
+
+	private void selectLineAt(Point point) {
+		TerminalTextBuffer buffer = session.textBuffer();
+		buffer.lock();
+		try {
+			TerminalSelection selection = TerminalSelectionUtil.lineSelection(point, buffer);
+			if (selection == null) {
+				clearSelection();
+			} else {
+				session.display().setSelection(selection);
+			}
+		} finally {
+			buffer.unlock();
+		}
+		selecting = false;
+		setDragging(false);
 	}
 
 	private void updateSelection(double mouseX, double mouseY) {
 		if (selectionAnchor == null) {
 			return;
 		}
+		scrollSelectionAtEdge(mouseY);
 		Point end = selectionPoint(mouseX, mouseY, true);
 		session.display().setSelection(new TerminalSelection(selectionAnchor, end));
 	}
 
 	private boolean isEmptySelection() {
-		TerminalSelection selection = session.display().getSelection();
-		return selection == null || selection.getEnd() == null || comparePoints(selection.getStart(), selection.getEnd()) == 0;
+		return TerminalSelectionUtil.isEmpty(session.display().getSelection());
 	}
 
 	private void clearSelection() {
@@ -563,6 +629,19 @@ public final class TerminalScreen extends Screen {
 		boolean beforeAnchor = row < selectionAnchor.y || (row == selectionAnchor.y && column < selectionAnchor.x);
 		int boundaryColumn = beforeAnchor ? column : Math.min(columns, column + 1);
 		return new Point(boundaryColumn, row);
+	}
+
+	private void scrollSelectionAtEdge(double mouseY) {
+		if (session == null || session.display().alternateScreenBuffer()) {
+			return;
+		}
+		int topEdge = terminalY + SELECTION_SCROLL_EDGE_ROWS * charHeight;
+		int bottomEdge = terminalY + (rows - SELECTION_SCROLL_EDGE_ROWS) * charHeight;
+		if (mouseY < topEdge) {
+			scrollScrollback(1);
+		} else if (mouseY >= bottomEdge) {
+			scrollScrollback(-1);
+		}
 	}
 
 	private void scrollScrollback(int lines) {
@@ -648,13 +727,6 @@ public final class TerminalScreen extends Screen {
 
 	private int terminalRow(double mouseY) {
 		return Math.max(0, Math.min(rows - 1, (int) ((mouseY - terminalY) / charHeight)));
-	}
-
-	private static int comparePoints(Point first, Point second) {
-		if (first.y != second.y) {
-			return Integer.compare(first.y, second.y);
-		}
-		return Integer.compare(first.x, second.x);
 	}
 
 	private static int terminalMouseButton(int button) {
@@ -743,6 +815,9 @@ public final class TerminalScreen extends Screen {
 		String status = Component.translatable("screen.minecraftty.terminal.status").getString();
 		if (scrollbackOffset > 0) {
 			status += " | history " + scrollbackOffset + "/" + session.textBuffer().getHistoryLinesCount();
+		}
+		if (System.currentTimeMillis() < copyStatusUntilMs) {
+			status += " | Copied";
 		}
 		return Component.literal(status).withStyle(Style.EMPTY.withoutShadow());
 	}
