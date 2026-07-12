@@ -2,7 +2,10 @@ package dev.br0b.minecraftty.client.terminal;
 
 import com.jediterm.terminal.TerminalColor;
 import com.jediterm.terminal.TextStyle;
+import com.jediterm.terminal.model.CharBuffer;
+import com.jediterm.terminal.model.TerminalLine;
 import com.jediterm.terminal.model.TerminalTextBuffer;
+import com.jediterm.terminal.util.CharUtils;
 import dev.br0b.minecraftty.Minecraftty;
 import dev.br0b.minecraftty.client.TerminalConfig;
 import net.minecraft.client.Minecraft;
@@ -10,7 +13,6 @@ import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
-import net.minecraft.network.chat.FontDescription;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.Style;
@@ -20,8 +22,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
 public final class TerminalScreen extends Screen {
-	private static final FontDescription TERMINAL_FONT = new FontDescription.Resource(Minecraftty.id("terminal"));
-	private static final Style TERMINAL_FONT_STYLE = Style.EMPTY.withFont(TERMINAL_FONT).withoutShadow();
 	private static final int SCREEN_DIM = 0xB0000000;
 	private static final int PANEL_BACKGROUND = 0xE80D1017;
 	private static final int PANEL_BORDER = 0x446E7681;
@@ -41,6 +41,7 @@ public final class TerminalScreen extends Screen {
 
 	private final Screen parent;
 	private TerminalSession session;
+	private TerminalGlyphAtlas glyphAtlas;
 	private int columns = 80;
 	private int rows = 24;
 	private int charWidth = 8;
@@ -63,6 +64,7 @@ public final class TerminalScreen extends Screen {
 
 	@Override
 	protected void init() {
+		glyphAtlas = TerminalGlyphAtlas.get();
 		recalculateTerminalSize();
 		try {
 			session = TerminalManager.getOrStart(columns, rows);
@@ -84,8 +86,9 @@ public final class TerminalScreen extends Screen {
 
 	private void recalculateTerminalSize() {
 		float fontScale = Math.max(0.75F, Math.min(1.6F, TerminalConfig.fontScale()));
-		charWidth = Math.max(6, Math.round(this.font.width(terminalComponent("W")) * fontScale));
-		charHeight = Math.max(12, Math.round((this.font.lineHeight + 5) * fontScale));
+		TerminalGlyphAtlas atlas = TerminalGlyphAtlas.get();
+		charWidth = Math.max(6, Math.round(atlas.cellWidth() * fontScale));
+		charHeight = Math.max(12, Math.round(atlas.cellHeight() * fontScale));
 		panelX = OUTER_MARGIN;
 		panelY = OUTER_MARGIN;
 		panelWidth = Math.max(1, this.width - OUTER_MARGIN * 2);
@@ -115,7 +118,7 @@ public final class TerminalScreen extends Screen {
 		}
 
 		if (session == null) {
-			graphics.text(font, terminalComponent("Starting terminal..."), terminalX, terminalY, DEFAULT_FOREGROUND);
+			glyphAtlas.draw(graphics, "Starting terminal...", DEFAULT_FOREGROUND, terminalX, terminalY, 20);
 			return;
 		}
 
@@ -123,8 +126,8 @@ public final class TerminalScreen extends Screen {
 		graphics.fill(panelX + 1, statusY - 4, panelX + panelWidth - 1, panelY + panelHeight - 1, STATUS_BACKGROUND);
 		graphics.text(font, statusComponent(), terminalX, statusY, 0xFF87909B);
 		if (session.isClosed()) {
-			graphics.text(font, terminalComponent(Component.translatable("screen.minecraftty.terminal.closed").getString()), terminalX,
-					Math.max(terminalY, statusY - charHeight - 8), 0xFFFFCC66);
+			glyphAtlas.draw(graphics, Component.translatable("screen.minecraftty.terminal.closed").getString(), 0xFFFFCC66,
+					terminalX, Math.max(terminalY, statusY - charHeight - 8), columns);
 		}
 	}
 
@@ -133,38 +136,8 @@ public final class TerminalScreen extends Screen {
 		buffer.lock();
 		try {
 			for (int row = 0; row < rows; row++) {
-				int y = terminalY + row * charHeight;
-				StringBuilder textRun = new StringBuilder();
-				int textRunStart = 0;
-				TextStyle textRunStyle = null;
-				for (int col = 0; col < columns; col++) {
-					char ch = buffer.getCharAt(col, row);
-					TextStyle style = buffer.getStyleAt(col, row);
-					int fg = foreground(style);
-					int bg = background(style);
-					if (bg != DEFAULT_BACKGROUND) {
-						graphics.fill(terminalX + col * charWidth, y, terminalX + (col + 1) * charWidth, y + charHeight, bg);
-					}
-					if (style != null && style.hasOption(TextStyle.Option.UNDERLINED)) {
-						graphics.fill(terminalX + col * charWidth, y + charHeight - 2,
-								terminalX + (col + 1) * charWidth, y + charHeight - 1, fg);
-					}
-					char printable = ch == 0 ? ' ' : ch;
-					if (textRun.length() == 0) {
-						textRunStart = col;
-						textRunStyle = style;
-						textRun.append(printable);
-					} else if (sameTextStyle(textRunStyle, style)) {
-						textRun.append(printable);
-					} else {
-						drawTextRun(graphics, textRun, textRunStyle, textRunStart, row);
-						textRun.setLength(0);
-						textRunStart = col;
-						textRunStyle = style;
-						textRun.append(printable);
-					}
-				}
-				drawTextRun(graphics, textRun, textRunStyle, textRunStart, row);
+				drawCellStyles(graphics, buffer, row);
+				drawLineText(graphics, buffer.getLine(row), row);
 			}
 
 			if (session.display().cursorVisible() && !session.isClosed()) {
@@ -180,32 +153,72 @@ public final class TerminalScreen extends Screen {
 		}
 	}
 
-	private void drawTextRun(GuiGraphicsExtractor graphics, StringBuilder run, TextStyle style, int startColumn, int row) {
-		if (run.isEmpty()) {
-			return;
+	private void drawCellStyles(GuiGraphicsExtractor graphics, TerminalTextBuffer buffer, int row) {
+		int y = terminalY + row * charHeight;
+		for (int col = 0; col < columns; col++) {
+			TextStyle style = buffer.getStyleAt(col, row);
+			int fg = foreground(style);
+			int bg = background(style);
+			int x = terminalX + col * charWidth;
+			if (bg != DEFAULT_BACKGROUND) {
+				graphics.fill(x, y, x + charWidth, y + charHeight, bg);
+			}
+			if (style != null && style.hasOption(TextStyle.Option.UNDERLINED)) {
+				graphics.fill(x, y + charHeight - 2, x + charWidth, y + charHeight - 1, fg);
+			}
 		}
-		int last = run.length() - 1;
-		while (last >= 0 && run.charAt(last) == ' ') {
-			last--;
-		}
-		if (last < 0) {
-			return;
-		}
-		String text = run.substring(0, last + 1);
-		graphics.text(font, terminalComponent(text), terminalX + startColumn * charWidth,
-				terminalY + row * charHeight, foreground(style));
 	}
 
-	private static boolean sameTextStyle(TextStyle left, TextStyle right) {
-		if (left == right) {
-			return true;
+	private void drawLineText(GuiGraphicsExtractor graphics, TerminalLine line, int row) {
+		int column = 0;
+		for (TerminalLine.TextEntry entry : line.getEntries()) {
+			if (column >= columns || entry.isNul()) {
+				break;
+			}
+			column = drawTextEntry(graphics, entry.getText(), entry.getStyle(), row, column);
 		}
-		if (left == null || right == null) {
-			return false;
+	}
+
+	private int drawTextEntry(GuiGraphicsExtractor graphics, CharBuffer buffer, TextStyle style, int row, int column) {
+		String text = buffer.toString();
+		for (int offset = 0; offset < text.length() && column < columns; ) {
+			char first = text.charAt(offset);
+			if (first == CharUtils.DWC) {
+				offset++;
+				continue;
+			}
+			if (first == CharUtils.NUL_CHAR || first == CharUtils.EMPTY_CHAR) {
+				offset++;
+				column++;
+				continue;
+			}
+
+			int codePoint = text.codePointAt(offset);
+			int width = terminalCellWidth(codePoint);
+			if (width > 0 && codePoint != ' ') {
+				glyphAtlas.draw(graphics, new String(Character.toChars(codePoint)), foreground(style),
+						terminalX + column * charWidth, terminalY + row * charHeight, width);
+			}
+			column += width;
+			offset += Character.charCount(codePoint);
 		}
-		return foreground(left) == foreground(right)
-				&& background(left) == background(right)
-				&& left.hasOption(TextStyle.Option.UNDERLINED) == right.hasOption(TextStyle.Option.UNDERLINED);
+		return column;
+	}
+
+	private static int terminalCellWidth(int codePoint) {
+		if (isCombiningOrVariation(codePoint)) {
+			return 0;
+		}
+		return CharUtils.isDoubleWidthCharacter(codePoint, false) ? 2 : 1;
+	}
+
+	private static boolean isCombiningOrVariation(int codePoint) {
+		int type = Character.getType(codePoint);
+		return type == Character.NON_SPACING_MARK
+				|| type == Character.COMBINING_SPACING_MARK
+				|| type == Character.ENCLOSING_MARK
+				|| (codePoint >= 0xFE00 && codePoint <= 0xFE0F)
+				|| (codePoint >= 0xE0100 && codePoint <= 0xE01EF);
 	}
 
 	private static int foreground(TextStyle style) {
@@ -340,10 +353,6 @@ public final class TerminalScreen extends Screen {
 
 	private static byte[] bytes(String text) {
 		return text.getBytes(StandardCharsets.UTF_8);
-	}
-
-	private static MutableComponent terminalComponent(String text) {
-		return Component.literal(text).withStyle(TERMINAL_FONT_STYLE);
 	}
 
 	private static MutableComponent statusComponent() {

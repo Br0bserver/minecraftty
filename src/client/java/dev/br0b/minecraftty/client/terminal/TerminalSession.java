@@ -53,6 +53,9 @@ public final class TerminalSession implements AutoCloseable {
 		Map<String, String> env = new HashMap<>(System.getenv());
 		env.put("TERM", "xterm-256color");
 		env.put("COLORTERM", "truecolor");
+		env.put("LANG", "C.UTF-8");
+		env.put("LC_ALL", "C.UTF-8");
+		env.put("LC_CTYPE", "C.UTF-8");
 
 		PtyProcess process = new PtyProcessBuilder(new String[]{shell, "-l"})
 				.setEnvironment(env)
