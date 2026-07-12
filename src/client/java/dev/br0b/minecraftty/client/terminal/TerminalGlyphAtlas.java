@@ -207,6 +207,12 @@ final class TerminalGlyphAtlas implements AutoCloseable {
 		int midX = width / 2;
 		int midY = height / 2;
 
+		if (renderBoxDrawingGlyph(graphics, codePoint, width, height, stroke, heavyStroke)) {
+			graphics.dispose();
+			copyImageToAtlas(glyphImage, atlasX, atlasY, width, height);
+			return;
+		}
+
 		switch (codePoint) {
 			case 0x2500 -> fillHorizontal(graphics, 0, midY - stroke / 2, width, stroke);
 			case 0x2501 -> fillHorizontal(graphics, 0, midY - stroke, width, stroke * 2);
@@ -381,6 +387,111 @@ final class TerminalGlyphAtlas implements AutoCloseable {
 				graphics.drawLine(i, 0, width - 1, height - 1 - i);
 			}
 		}
+	}
+
+	private static boolean renderBoxDrawingGlyph(Graphics2D graphics, int codePoint, int width, int height,
+			int stroke, int heavyStroke) {
+		if (!isBoxDrawingLineGlyph(codePoint) || isDottedLineGlyph(codePoint)) {
+			return false;
+		}
+
+		int left = boxDrawingStroke(codePoint, BoxSide.LEFT, stroke, heavyStroke);
+		int right = boxDrawingStroke(codePoint, BoxSide.RIGHT, stroke, heavyStroke);
+		int top = boxDrawingStroke(codePoint, BoxSide.TOP, stroke, heavyStroke);
+		int bottom = boxDrawingStroke(codePoint, BoxSide.BOTTOM, stroke, heavyStroke);
+		if (left == 0 && right == 0 && top == 0 && bottom == 0) {
+			return false;
+		}
+
+		int midX = width / 2;
+		int midY = height / 2;
+		if (left > 0) {
+			fillHorizontal(graphics, 0, midY - left / 2, midX, left);
+		}
+		if (right > 0) {
+			fillHorizontal(graphics, midX, midY - right / 2, width - midX, right);
+		}
+		if (top > 0) {
+			fillVertical(graphics, midX - top / 2, 0, top, midY);
+		}
+		if (bottom > 0) {
+			fillVertical(graphics, midX - bottom / 2, midY, bottom, height - midY);
+		}
+		return true;
+	}
+
+	private static boolean isBoxDrawingLineGlyph(int codePoint) {
+		return (codePoint >= 0x2500 && codePoint <= 0x254B)
+				|| (codePoint >= 0x2574 && codePoint <= 0x257F);
+	}
+
+	private static boolean isDottedLineGlyph(int codePoint) {
+		return (codePoint >= 0x2504 && codePoint <= 0x250B)
+				|| (codePoint >= 0x254C && codePoint <= 0x254F);
+	}
+
+	private static int boxDrawingStroke(int codePoint, BoxSide side, int stroke, int heavyStroke) {
+		return switch (side) {
+			case LEFT -> leftBoxDrawingStroke(codePoint, stroke, heavyStroke);
+			case RIGHT -> rightBoxDrawingStroke(codePoint, stroke, heavyStroke);
+			case TOP -> topBoxDrawingStroke(codePoint, stroke, heavyStroke);
+			case BOTTOM -> bottomBoxDrawingStroke(codePoint, stroke, heavyStroke);
+		};
+	}
+
+	private static int leftBoxDrawingStroke(int codePoint, int stroke, int heavyStroke) {
+		return switch (codePoint) {
+			case 0x2500, 0x2510, 0x2512, 0x2518, 0x251A, 0x2524, 0x2526, 0x2527, 0x2528,
+					0x252C, 0x252E, 0x2530, 0x2532, 0x2534, 0x2536, 0x2538, 0x253A, 0x253C,
+					0x253E, 0x2540, 0x2541, 0x2542, 0x2544, 0x2546, 0x254A, 0x2574, 0x257C -> stroke;
+			case 0x2501, 0x2511, 0x2513, 0x2519, 0x251B, 0x2525, 0x2529, 0x252A, 0x252B,
+					0x252D, 0x252F, 0x2531, 0x2533, 0x2535, 0x2537, 0x2539, 0x253B, 0x253D,
+					0x253F, 0x2543, 0x2545, 0x2547, 0x2548, 0x2549, 0x254B, 0x2578, 0x257E -> heavyStroke;
+			default -> 0;
+		};
+	}
+
+	private static int rightBoxDrawingStroke(int codePoint, int stroke, int heavyStroke) {
+		return switch (codePoint) {
+			case 0x2500, 0x250C, 0x250E, 0x2514, 0x2516, 0x251C, 0x251E, 0x251F, 0x2520,
+					0x252C, 0x252D, 0x2530, 0x2531, 0x2534, 0x2535, 0x2538, 0x2539, 0x253C,
+					0x253D, 0x2540, 0x2541, 0x2542, 0x2543, 0x2545, 0x2549, 0x2576, 0x257E -> stroke;
+			case 0x2501, 0x250D, 0x250F, 0x2515, 0x2517, 0x251D, 0x2521, 0x2522, 0x2523,
+					0x252E, 0x252F, 0x2532, 0x2533, 0x2536, 0x2537, 0x253A, 0x253B, 0x253E,
+					0x253F, 0x2544, 0x2546, 0x2547, 0x2548, 0x254A, 0x254B, 0x257A, 0x257C -> heavyStroke;
+			default -> 0;
+		};
+	}
+
+	private static int topBoxDrawingStroke(int codePoint, int stroke, int heavyStroke) {
+		return switch (codePoint) {
+			case 0x2502, 0x2514, 0x2515, 0x2518, 0x2519, 0x251C, 0x251D, 0x251F, 0x2522,
+					0x2524, 0x2525, 0x2527, 0x252A, 0x2534, 0x2535, 0x2536, 0x2537, 0x253C,
+					0x253D, 0x253E, 0x253F, 0x2541, 0x2545, 0x2546, 0x2548, 0x2575, 0x257D -> stroke;
+			case 0x2503, 0x2516, 0x2517, 0x251A, 0x251B, 0x251E, 0x2520, 0x2521, 0x2523,
+					0x2526, 0x2528, 0x2529, 0x252B, 0x2538, 0x2539, 0x253A, 0x253B, 0x2540,
+					0x2542, 0x2543, 0x2544, 0x2547, 0x2549, 0x254A, 0x254B, 0x2579, 0x257F -> heavyStroke;
+			default -> 0;
+		};
+	}
+
+	private static int bottomBoxDrawingStroke(int codePoint, int stroke, int heavyStroke) {
+		return switch (codePoint) {
+			case 0x2502, 0x250C, 0x250D, 0x2510, 0x2511, 0x251C, 0x251D, 0x251E, 0x2521,
+					0x2524, 0x2525, 0x2526, 0x2529, 0x252C, 0x252D, 0x252E, 0x252F, 0x253C,
+					0x253D, 0x253E, 0x253F, 0x2540, 0x2543, 0x2544, 0x2547, 0x2577, 0x257F -> stroke;
+			case 0x2503, 0x250E, 0x250F, 0x2512, 0x2513, 0x251F, 0x2520, 0x2522, 0x2523,
+					0x2527, 0x2528, 0x252A, 0x252B, 0x2530, 0x2531, 0x2532, 0x2533, 0x2541,
+					0x2542, 0x2545, 0x2546, 0x2548, 0x2549, 0x254A, 0x254B, 0x257B, 0x257D -> heavyStroke;
+			default -> 0;
+		};
+	}
+
+	private enum BoxSide {
+		LEFT,
+		RIGHT,
+		TOP,
+		BOTTOM
 	}
 
 	private static void drawRoundedCorner(Graphics2D graphics, RoundedCorner corner, int width, int height, int stroke) {
