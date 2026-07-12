@@ -58,6 +58,9 @@ final class TerminalGlyphAtlas implements AutoCloseable {
 	private int cursorX = PADDING;
 	private int cursorY = PADDING;
 	private int rowHeight = 0;
+	private boolean uploadPending = false;
+	private long glyphMisses = 0;
+	private long atlasUploads = 0;
 
 	private TerminalGlyphAtlas() {
 		float rasterFontSize = FONT_SIZE * RASTER_SCALE;
@@ -102,6 +105,22 @@ final class TerminalGlyphAtlas implements AutoCloseable {
 				glyph.u0, glyph.u1, glyph.v0, glyph.v1);
 	}
 
+	void flushUploads() {
+		if (uploadPending) {
+			texture.upload();
+			atlasUploads++;
+			uploadPending = false;
+		}
+	}
+
+	long glyphMisses() {
+		return glyphMisses;
+	}
+
+	long atlasUploads() {
+		return atlasUploads;
+	}
+
 	private Glyph glyph(String text, int color, int cells, int targetCellWidth, int targetCellHeight) {
 		int displayWidth = Math.max(1, targetCellWidth) * cells;
 		int displayHeight = Math.max(1, targetCellHeight);
@@ -111,6 +130,7 @@ final class TerminalGlyphAtlas implements AutoCloseable {
 		if (cached != null) {
 			return cached;
 		}
+		glyphMisses++;
 
 		int width = Math.max(1, Math.round(displayWidth * RASTER_SCALE));
 		int height = Math.max(1, Math.round(displayHeight * RASTER_SCALE));
@@ -123,7 +143,7 @@ final class TerminalGlyphAtlas implements AutoCloseable {
 		} else if (!emojiRenderer.render(text, cursorX, cursorY, width, height, image)) {
 			renderTextGlyph(text, color, cursorX, cursorY, width, height);
 		}
-		texture.upload();
+		uploadPending = true;
 
 		Glyph glyph = new Glyph(displayWidth, displayHeight,
 				cursorX / (float) ATLAS_SIZE,
@@ -668,7 +688,7 @@ final class TerminalGlyphAtlas implements AutoCloseable {
 		if (cursorY + height + PADDING > ATLAS_SIZE) {
 			glyphs.clear();
 			image.fillRect(0, 0, ATLAS_SIZE, ATLAS_SIZE, 0);
-			texture.upload();
+			uploadPending = true;
 			cursorX = PADDING;
 			cursorY = PADDING;
 			rowHeight = 0;

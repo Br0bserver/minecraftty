@@ -45,8 +45,17 @@ tasks.register("verifyTerminalCellWidth", JavaExec) {
 	mainClass = "dev.br0b.minecraftty.client.terminal.TerminalCellWidthVerifier"
 }
 
+tasks.register("verifyTerminalImageProtocolFilter", JavaExec) {
+	group = "verification"
+	description = "Runs fast terminal image protocol suppression checks without starting Minecraft."
+	dependsOn testClasses
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = "dev.br0b.minecraftty.client.terminal.TerminalImageProtocolFilterVerifier"
+}
+
 tasks.named("check") {
 	dependsOn verifyTerminalCellWidth
+	dependsOn verifyTerminalImageProtocolFilter
 }
 
 tasks.named("test", Test) {

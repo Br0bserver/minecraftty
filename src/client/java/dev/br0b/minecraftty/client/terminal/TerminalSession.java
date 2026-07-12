@@ -51,6 +51,7 @@ public final class TerminalSession implements AutoCloseable {
 
 	static TerminalSession start(String shell, int columns, int rows) throws IOException {
 		Map<String, String> env = new HashMap<>(System.getenv());
+		removeHostTerminalImageCapabilityEnv(env);
 		env.put("TERM", "xterm-256color");
 		env.put("COLORTERM", "truecolor");
 		String locale = preferredUtf8Locale(env);
@@ -74,7 +75,7 @@ public final class TerminalSession implements AutoCloseable {
 		TerminalTextBuffer textBuffer = new TerminalTextBuffer(columns, rows, styleState, HISTORY_LINES);
 		JediTerminal terminal = new JediTerminal(display, textBuffer, styleState);
 		MinecrafttyExecutorServiceManager executorServiceManager = new MinecrafttyExecutorServiceManager();
-		TerminalStarter starter = new TerminalStarter(
+		TerminalStarter starter = new MinecrafttyTerminalStarter(
 				terminal,
 				connector,
 				new TtyBasedArrayDataStream(connector),
@@ -83,6 +84,26 @@ public final class TerminalSession implements AutoCloseable {
 		);
 		terminal.setTerminalOutput(starter);
 		return new TerminalSession(process, connector, display, textBuffer, terminal, starter, executorServiceManager);
+	}
+
+	static void removeHostTerminalImageCapabilityEnv(Map<String, String> env) {
+		env.remove("TERM_PROGRAM");
+		env.remove("TERM_PROGRAM_VERSION");
+		env.remove("KITTY_WINDOW_ID");
+		env.remove("KITTY_PID");
+		env.remove("KONSOLE_VERSION");
+		env.remove("WEZTERM_EXECUTABLE");
+		env.remove("WEZTERM_PANE");
+		env.remove("GHOSTTY_RESOURCES_DIR");
+		env.remove("GHOSTTY_BIN_DIR");
+		env.remove("WT_SESSION");
+		env.remove("WT_PROFILE_ID");
+		env.remove("WARP_HONOR_PS1");
+		env.remove("TABBY_CONFIG_DIRECTORY");
+		env.remove("ITERM_SESSION_ID");
+		env.remove("LC_TERMINAL");
+		env.remove("LC_TERMINAL_VERSION");
+		env.remove("VTE_VERSION");
 	}
 
 	private static String preferredUtf8Locale(Map<String, String> env) {

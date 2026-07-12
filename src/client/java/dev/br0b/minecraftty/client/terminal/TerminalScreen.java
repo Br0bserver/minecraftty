@@ -6,10 +6,8 @@ import com.jediterm.terminal.emulator.mouse.MouseButtonCodes;
 import com.jediterm.terminal.emulator.mouse.MouseButtonModifierFlags;
 import com.jediterm.terminal.emulator.mouse.MouseFormat;
 import com.jediterm.terminal.emulator.mouse.MouseMode;
-import com.jediterm.terminal.model.CharBuffer;
 import com.jediterm.terminal.model.TerminalLine;
 import com.jediterm.terminal.model.TerminalTextBuffer;
-import com.jediterm.terminal.util.CharUtils;
 import dev.br0b.minecraftty.Minecraftty;
 import dev.br0b.minecraftty.client.TerminalConfig;
 import net.minecraft.client.Minecraft;
@@ -47,6 +45,7 @@ public final class TerminalScreen extends Screen {
 	};
 
 	private final Screen parent;
+	private final TerminalRenderCache renderCache = new TerminalRenderCache();
 	private TerminalSession session;
 	private TerminalGlyphAtlas glyphAtlas;
 	private int columns = 80;
@@ -76,6 +75,7 @@ public final class TerminalScreen extends Screen {
 		recalculateTerminalSize();
 		try {
 			session = TerminalManager.getOrStart(columns, rows);
+			session.textBuffer().addChangesListener(renderCache);
 			startupError = null;
 		} catch (IOException e) {
 			Minecraftty.LOGGER.error("Failed to start terminal", e);
@@ -88,6 +88,7 @@ public final class TerminalScreen extends Screen {
 		super.resize(width, height);
 		recalculateTerminalSize();
 		clampScrollbackOffset();
+		renderCache.clear();
 		if (session != null) {
 			session.resize(columns, rows);
 		}
@@ -129,6 +130,7 @@ public final class TerminalScreen extends Screen {
 		if (session == null) {
 			glyphAtlas.draw(graphics, "Starting terminal...", DEFAULT_FOREGROUND, terminalX, terminalY, 20,
 					charWidth, charHeight);
+			glyphAtlas.flushUploads();
 			return;
 		}
 
@@ -140,6 +142,7 @@ public final class TerminalScreen extends Screen {
 			glyphAtlas.draw(graphics, Component.translatable("screen.minecraftty.terminal.closed").getString(), 0xFFFFCC66,
 					terminalX, Math.max(terminalY, statusY - charHeight - 8), columns, charWidth, charHeight);
 		}
+		glyphAtlas.flushUploads();
 	}
 
 	private void drawTerminal(GuiGraphicsExtractor graphics) {
@@ -148,8 +151,9 @@ public final class TerminalScreen extends Screen {
 		try {
 			for (int row = 0; row < rows; row++) {
 				int bufferRow = bufferRow(row);
-				drawCellStyles(graphics, buffer, row, bufferRow);
-				drawLineText(graphics, buffer.getLine(bufferRow), row);
+				TerminalLine line = buffer.getLine(bufferRow);
+				renderCache.drawLine(graphics, glyphAtlas, line, bufferRow, row, terminalX, terminalY, columns,
+						charWidth, charHeight);
 			}
 
 			if (scrollbackOffset == 0 && session.display().cursorVisible() && !session.isClosed()) {
@@ -169,61 +173,7 @@ public final class TerminalScreen extends Screen {
 		return visibleRow - scrollbackOffset;
 	}
 
-	private void drawCellStyles(GuiGraphicsExtractor graphics, TerminalTextBuffer buffer, int row, int bufferRow) {
-		int y = terminalY + row * charHeight;
-		for (int col = 0; col < columns; col++) {
-			TextStyle style = buffer.getStyleAt(col, bufferRow);
-			int fg = foreground(style);
-			int bg = background(style);
-			int x = terminalX + col * charWidth;
-			if (bg != DEFAULT_BACKGROUND) {
-				graphics.fill(x, y, x + charWidth, y + charHeight, bg);
-			}
-			if (style != null && style.hasOption(TextStyle.Option.UNDERLINED)) {
-				graphics.fill(x, y + charHeight - 2, x + charWidth, y + charHeight - 1, fg);
-			}
-		}
-	}
-
-	private void drawLineText(GuiGraphicsExtractor graphics, TerminalLine line, int row) {
-		int column = 0;
-		for (TerminalLine.TextEntry entry : line.getEntries()) {
-			if (column >= columns || entry.isNul()) {
-				break;
-			}
-			column = drawTextEntry(graphics, entry.getText(), entry.getStyle(), row, column);
-		}
-	}
-
-	private int drawTextEntry(GuiGraphicsExtractor graphics, CharBuffer buffer, TextStyle style, int row, int column) {
-		String text = buffer.toString();
-		for (int offset = 0; offset < text.length() && column < columns; ) {
-			char first = text.charAt(offset);
-			if (first == CharUtils.DWC) {
-				offset++;
-				continue;
-			}
-			if (first == CharUtils.NUL_CHAR || first == CharUtils.EMPTY_CHAR) {
-				offset++;
-				column++;
-				continue;
-			}
-
-			int nextOffset = TerminalCellWidth.nextCluster(text, offset);
-			String cluster = text.substring(offset, nextOffset);
-			int width = TerminalCellWidth.cells(cluster);
-			if (width > 0 && !TerminalCellWidth.isBlankCluster(cluster)) {
-				glyphAtlas.draw(graphics, TerminalGlyphSubstitution.displayText(cluster), foreground(style),
-						terminalX + column * charWidth, terminalY + row * charHeight, width,
-						charWidth, charHeight);
-			}
-			column += width;
-			offset = nextOffset;
-		}
-		return column;
-	}
-
-	private static int foreground(TextStyle style) {
+	static int foreground(TextStyle style) {
 		if (style == null) {
 			return DEFAULT_FOREGROUND;
 		}
@@ -240,7 +190,7 @@ public final class TerminalScreen extends Screen {
 		return color;
 	}
 
-	private static int background(TextStyle style) {
+	static int background(TextStyle style) {
 		if (style == null) {
 			return DEFAULT_BACKGROUND;
 		}
@@ -280,6 +230,10 @@ public final class TerminalScreen extends Screen {
 		int g = Math.min(255, (int) (((color >> 8) & 0xFF) * 1.2F));
 		int b = Math.min(255, (int) ((color & 0xFF) * 1.2F));
 		return 0xFF000000 | (r << 16) | (g << 8) | b;
+	}
+
+	static int defaultBackground() {
+		return DEFAULT_BACKGROUND;
 	}
 
 	@Override
@@ -612,6 +566,14 @@ public final class TerminalScreen extends Screen {
 			status += " | history " + scrollbackOffset + "/" + session.textBuffer().getHistoryLinesCount();
 		}
 		return Component.literal(status).withStyle(Style.EMPTY.withoutShadow());
+	}
+
+	@Override
+	public void removed() {
+		if (session != null) {
+			session.textBuffer().removeChangesListener(renderCache);
+		}
+		super.removed();
 	}
 
 	@Override
