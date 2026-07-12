@@ -14,6 +14,7 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 final class TerminalGlyphAtlas implements AutoCloseable {
@@ -25,7 +26,8 @@ final class TerminalGlyphAtlas implements AutoCloseable {
 
 	private static TerminalGlyphAtlas instance;
 
-	private final java.awt.Font font;
+	private final java.awt.Font primaryFont;
+	private final List<java.awt.Font> fonts;
 	private final int cellWidth;
 	private final int cellHeight;
 	private final int ascent;
@@ -37,11 +39,18 @@ final class TerminalGlyphAtlas implements AutoCloseable {
 	private int rowHeight = 0;
 
 	private TerminalGlyphAtlas() {
-		this.font = loadFont().deriveFont(java.awt.Font.PLAIN, FONT_SIZE * RASTER_SCALE);
-		FontMetrics metrics = metrics(font);
-		this.cellWidth = Math.max(6, Math.round(metrics.charWidth('W') / RASTER_SCALE));
-		this.cellHeight = Math.max(12, Math.round(metrics.getHeight() / RASTER_SCALE));
-		this.ascent = metrics.getAscent();
+		float rasterFontSize = FONT_SIZE * RASTER_SCALE;
+		this.primaryFont = loadFont().deriveFont(java.awt.Font.PLAIN, rasterFontSize);
+		this.fonts = List.of(
+				primaryFont,
+				new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 1).deriveFont(rasterFontSize),
+				new java.awt.Font(java.awt.Font.SANS_SERIF, java.awt.Font.PLAIN, 1).deriveFont(rasterFontSize),
+				new java.awt.Font(java.awt.Font.DIALOG, java.awt.Font.PLAIN, 1).deriveFont(rasterFontSize));
+
+		FontMetrics primaryMetrics = metrics(primaryFont);
+		this.cellWidth = Math.max(6, Math.round(primaryMetrics.charWidth('W') / RASTER_SCALE));
+		this.cellHeight = Math.max(12, Math.round(maxHeight(fonts) / RASTER_SCALE));
+		this.ascent = maxAscent(fonts);
 		this.image = new NativeImage(ATLAS_SIZE, ATLAS_SIZE, true);
 		this.image.fillRect(0, 0, ATLAS_SIZE, ATLAS_SIZE, 0);
 		this.texture = new DynamicTexture(() -> "minecraftty-terminal-glyphs", image);
@@ -88,7 +97,7 @@ final class TerminalGlyphAtlas implements AutoCloseable {
 		graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 		graphics.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_OFF);
 		graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-		graphics.setFont(font);
+		graphics.setFont(fontFor(text));
 		graphics.setColor(new Color(color, true));
 		graphics.setClip(0, 0, width, height);
 		graphics.drawString(text, 0, ascent);
@@ -134,6 +143,21 @@ final class TerminalGlyphAtlas implements AutoCloseable {
 		}
 	}
 
+	private java.awt.Font fontFor(String text) {
+		for (java.awt.Font candidate : fonts) {
+			if (candidate.canDisplayUpTo(text) == -1) {
+				return candidate;
+			}
+		}
+		int firstCodePoint = text.codePointAt(0);
+		for (java.awt.Font candidate : fonts) {
+			if (candidate.canDisplay(firstCodePoint)) {
+				return candidate;
+			}
+		}
+		return fonts.getLast();
+	}
+
 	private static FontMetrics metrics(java.awt.Font font) {
 		BufferedImage image = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
 		Graphics2D graphics = image.createGraphics();
@@ -141,6 +165,22 @@ final class TerminalGlyphAtlas implements AutoCloseable {
 		FontMetrics metrics = graphics.getFontMetrics();
 		graphics.dispose();
 		return metrics;
+	}
+
+	private static int maxAscent(List<java.awt.Font> fonts) {
+		int ascent = 0;
+		for (java.awt.Font font : fonts) {
+			ascent = Math.max(ascent, metrics(font).getAscent());
+		}
+		return ascent;
+	}
+
+	private static int maxHeight(List<java.awt.Font> fonts) {
+		int height = 0;
+		for (java.awt.Font font : fonts) {
+			height = Math.max(height, metrics(font).getHeight());
+		}
+		return height;
 	}
 
 	private static java.awt.Font loadFont() {
