@@ -207,6 +207,12 @@ final class TerminalGlyphAtlas implements AutoCloseable {
 		int midX = width / 2;
 		int midY = height / 2;
 
+		if (renderDoubleBoxDrawingGlyph(graphics, codePoint, width, height, stroke)) {
+			graphics.dispose();
+			copyImageToAtlas(glyphImage, atlasX, atlasY, width, height);
+			return;
+		}
+
 		if (renderBoxDrawingGlyph(graphics, codePoint, width, height, stroke, heavyStroke)) {
 			graphics.dispose();
 			copyImageToAtlas(glyphImage, atlasX, atlasY, width, height);
@@ -420,6 +426,102 @@ final class TerminalGlyphAtlas implements AutoCloseable {
 		return true;
 	}
 
+	private static boolean renderDoubleBoxDrawingGlyph(Graphics2D graphics, int codePoint, int width, int height,
+			int stroke) {
+		if (codePoint < 0x2550 || codePoint > 0x256C) {
+			return false;
+		}
+
+		LineStyle left = doubleBoxDrawingStyle(codePoint, BoxSide.LEFT);
+		LineStyle right = doubleBoxDrawingStyle(codePoint, BoxSide.RIGHT);
+		LineStyle top = doubleBoxDrawingStyle(codePoint, BoxSide.TOP);
+		LineStyle bottom = doubleBoxDrawingStyle(codePoint, BoxSide.BOTTOM);
+		if (left == LineStyle.NONE && right == LineStyle.NONE && top == LineStyle.NONE && bottom == LineStyle.NONE) {
+			return false;
+		}
+
+		int midX = width / 2;
+		int midY = height / 2;
+		drawHorizontalBoxSide(graphics, left, 0, midX, midY, stroke);
+		drawHorizontalBoxSide(graphics, right, midX, width - midX, midY, stroke);
+		drawVerticalBoxSide(graphics, top, midX, 0, midY, stroke);
+		drawVerticalBoxSide(graphics, bottom, midX, midY, height - midY, stroke);
+		return true;
+	}
+
+	private static void drawHorizontalBoxSide(Graphics2D graphics, LineStyle style, int x, int width, int midY,
+			int stroke) {
+		switch (style) {
+			case SINGLE -> fillHorizontal(graphics, x, midY - stroke / 2, width, stroke);
+			case DOUBLE -> {
+				int gap = Math.max(stroke + 1, stroke * 2);
+				fillHorizontal(graphics, x, midY - gap, width, stroke);
+				fillHorizontal(graphics, x, midY + gap - stroke, width, stroke);
+			}
+			case NONE -> {
+			}
+		}
+	}
+
+	private static void drawVerticalBoxSide(Graphics2D graphics, LineStyle style, int midX, int y, int height,
+			int stroke) {
+		switch (style) {
+			case SINGLE -> fillVertical(graphics, midX - stroke / 2, y, stroke, height);
+			case DOUBLE -> {
+				int gap = Math.max(stroke + 1, stroke * 2);
+				fillVertical(graphics, midX - gap, y, stroke, height);
+				fillVertical(graphics, midX + gap - stroke, y, stroke, height);
+			}
+			case NONE -> {
+			}
+		}
+	}
+
+	private static LineStyle doubleBoxDrawingStyle(int codePoint, BoxSide side) {
+		return switch (side) {
+			case LEFT -> leftDoubleBoxDrawingStyle(codePoint);
+			case RIGHT -> rightDoubleBoxDrawingStyle(codePoint);
+			case TOP -> topDoubleBoxDrawingStyle(codePoint);
+			case BOTTOM -> bottomDoubleBoxDrawingStyle(codePoint);
+		};
+	}
+
+	private static LineStyle leftDoubleBoxDrawingStyle(int codePoint) {
+		return switch (codePoint) {
+			case 0x2550, 0x2555, 0x2556, 0x2557, 0x255B, 0x255C, 0x255D, 0x2561, 0x2562,
+					0x2563, 0x2564, 0x2566, 0x2567, 0x2569, 0x256A, 0x256C -> LineStyle.DOUBLE;
+			case 0x2565, 0x2568, 0x256B -> LineStyle.SINGLE;
+			default -> LineStyle.NONE;
+		};
+	}
+
+	private static LineStyle rightDoubleBoxDrawingStyle(int codePoint) {
+		return switch (codePoint) {
+			case 0x2550, 0x2552, 0x2553, 0x2554, 0x2558, 0x2559, 0x255A, 0x255E, 0x255F,
+					0x2560, 0x2564, 0x2566, 0x2567, 0x2569, 0x256A, 0x256C -> LineStyle.DOUBLE;
+			case 0x2565, 0x2568, 0x256B -> LineStyle.SINGLE;
+			default -> LineStyle.NONE;
+		};
+	}
+
+	private static LineStyle topDoubleBoxDrawingStyle(int codePoint) {
+		return switch (codePoint) {
+			case 0x2551, 0x2558, 0x255A, 0x255B, 0x255D, 0x255F, 0x2560, 0x2562, 0x2563,
+					0x2567, 0x2569, 0x256A, 0x256C -> LineStyle.DOUBLE;
+			case 0x2559, 0x255C, 0x255E, 0x2561, 0x2564, 0x2566, 0x256B -> LineStyle.SINGLE;
+			default -> LineStyle.NONE;
+		};
+	}
+
+	private static LineStyle bottomDoubleBoxDrawingStyle(int codePoint) {
+		return switch (codePoint) {
+			case 0x2551, 0x2552, 0x2554, 0x2555, 0x2557, 0x255F, 0x2560, 0x2562, 0x2563,
+					0x2564, 0x2566, 0x256A, 0x256C -> LineStyle.DOUBLE;
+			case 0x2553, 0x2556, 0x255E, 0x2561, 0x2567, 0x2569, 0x256B -> LineStyle.SINGLE;
+			default -> LineStyle.NONE;
+		};
+	}
+
 	private static boolean isBoxDrawingLineGlyph(int codePoint) {
 		return (codePoint >= 0x2500 && codePoint <= 0x254B)
 				|| (codePoint >= 0x2574 && codePoint <= 0x257F);
@@ -492,6 +594,12 @@ final class TerminalGlyphAtlas implements AutoCloseable {
 		RIGHT,
 		TOP,
 		BOTTOM
+	}
+
+	private enum LineStyle {
+		NONE,
+		SINGLE,
+		DOUBLE
 	}
 
 	private static void drawRoundedCorner(Graphics2D graphics, RoundedCorner corner, int width, int height, int stroke) {
