@@ -1,12 +1,15 @@
 package dev.br0b.minecraftty.client.terminal;
 
+import com.jediterm.core.compatibility.Point;
 import com.jediterm.terminal.TerminalColor;
 import com.jediterm.terminal.TextStyle;
 import com.jediterm.terminal.emulator.mouse.MouseButtonCodes;
 import com.jediterm.terminal.emulator.mouse.MouseButtonModifierFlags;
 import com.jediterm.terminal.emulator.mouse.MouseFormat;
 import com.jediterm.terminal.emulator.mouse.MouseMode;
+import com.jediterm.terminal.model.SelectionUtil;
 import com.jediterm.terminal.model.TerminalLine;
+import com.jediterm.terminal.model.TerminalSelection;
 import com.jediterm.terminal.model.TerminalTextBuffer;
 import dev.br0b.minecraftty.Minecraftty;
 import dev.br0b.minecraftty.client.TerminalConfig;
@@ -34,6 +37,7 @@ public final class TerminalScreen extends Screen {
 	private static final int DEFAULT_FOREGROUND = 0xFFE6EDF3;
 	private static final int DEFAULT_BACKGROUND = TERMINAL_BACKGROUND;
 	private static final int PREDICTION_FOREGROUND = 0xFF6E7681;
+	private static final int SELECTION_BACKGROUND = 0x663B82F6;
 	private static final int OUTER_MARGIN = 14;
 	private static final int PANEL_PADDING = 12;
 	private static final int STATUS_GAP = 8;
@@ -63,6 +67,8 @@ public final class TerminalScreen extends Screen {
 	private int terminalHeight;
 	private int statusY;
 	private int scrollbackOffset;
+	private boolean selecting;
+	private Point selectionAnchor;
 	private String startupError;
 
 	public TerminalScreen(Screen parent) {
@@ -153,8 +159,15 @@ public final class TerminalScreen extends Screen {
 			for (int row = 0; row < rows; row++) {
 				int bufferRow = bufferRow(row);
 				TerminalLine line = buffer.getLine(bufferRow);
-				renderCache.drawLine(graphics, glyphAtlas, line, bufferRow, row, terminalX, terminalY, columns,
+				renderCache.drawLineBackground(graphics, line, bufferRow, row, terminalX, terminalY, columns,
 						charWidth, charHeight);
+			}
+			drawSelection(graphics);
+			for (int row = 0; row < rows; row++) {
+				int bufferRow = bufferRow(row);
+				TerminalLine line = buffer.getLine(bufferRow);
+				renderCache.drawLineForeground(graphics, glyphAtlas, line, bufferRow, row, terminalX, terminalY,
+						columns, charWidth, charHeight);
 			}
 
 			if (scrollbackOffset == 0 && session.display().cursorVisible() && !session.isClosed()) {
@@ -165,6 +178,41 @@ public final class TerminalScreen extends Screen {
 			}
 		} finally {
 			buffer.unlock();
+		}
+	}
+
+	private void drawSelection(GuiGraphicsExtractor graphics) {
+		TerminalSelection selection = session.display().getSelection();
+		if (selection == null || selection.getEnd() == null) {
+			return;
+		}
+
+		Point start = new Point(selection.getStart());
+		Point end = new Point(selection.getEnd());
+		if (comparePoints(start, end) == 0) {
+			return;
+		}
+		if (comparePoints(start, end) > 0) {
+			Point swap = start;
+			start = end;
+			end = swap;
+		}
+
+		for (int visibleRow = 0; visibleRow < rows; visibleRow++) {
+			int row = bufferRow(visibleRow);
+			if (row < start.y || row > end.y) {
+				continue;
+			}
+			int firstColumn = row == start.y ? start.x : 0;
+			int endColumn = row == end.y ? end.x : columns;
+			firstColumn = Math.max(0, Math.min(columns, firstColumn));
+			endColumn = Math.max(0, Math.min(columns, endColumn));
+			if (endColumn <= firstColumn) {
+				continue;
+			}
+			int x = terminalX + firstColumn * charWidth;
+			int y = terminalY + visibleRow * charHeight;
+			graphics.fill(x, y, terminalX + endColumn * charWidth, y + charHeight, SELECTION_BACKGROUND);
 		}
 	}
 
@@ -276,7 +324,13 @@ public final class TerminalScreen extends Screen {
 			return super.keyPressed(event);
 		}
 
+		if (isCopyShortcut(keyCode, modifiers)) {
+			copySelection();
+			return true;
+		}
+
 		if (isPasteShortcut(keyCode, modifiers)) {
+			clearSelection();
 			scrollbackOffset = 0;
 			pasteClipboard();
 			return true;
@@ -288,6 +342,7 @@ public final class TerminalScreen extends Screen {
 				scrollScrollback(keyCode == GLFW.GLFW_KEY_PAGE_UP ? rows - 1 : -(rows - 1));
 				return true;
 			}
+			clearSelection();
 			scrollbackOffset = 0;
 			session.writeUserInput(encoded);
 			return true;
@@ -316,6 +371,29 @@ public final class TerminalScreen extends Screen {
 				|| (keyCode == GLFW.GLFW_KEY_INSERT && shift);
 	}
 
+	private static boolean isCopyShortcut(int keyCode, int modifiers) {
+		boolean ctrl = (modifiers & GLFW.GLFW_MOD_CONTROL) != 0;
+		boolean shift = (modifiers & GLFW.GLFW_MOD_SHIFT) != 0;
+		return ctrl && ((shift && keyCode == GLFW.GLFW_KEY_C) || keyCode == GLFW.GLFW_KEY_INSERT);
+	}
+
+	private void copySelection() {
+		TerminalSelection selection = session.display().getSelection();
+		if (selection == null || selection.getEnd() == null || comparePoints(selection.getStart(), selection.getEnd()) == 0) {
+			return;
+		}
+		TerminalTextBuffer buffer = session.textBuffer();
+		buffer.lock();
+		try {
+			String text = SelectionUtil.getSelectionText(selection, buffer);
+			if (!text.isEmpty()) {
+				Minecraft.getInstance().keyboardHandler.setClipboard(text);
+			}
+		} finally {
+			buffer.unlock();
+		}
+	}
+
 	private static String normalizePastedText(String text) {
 		return Normalizer.normalize(text.replace("\r\n", "\n").replace('\r', '\n'), Normalizer.Form.NFC);
 	}
@@ -337,6 +415,7 @@ public final class TerminalScreen extends Screen {
 		if ((modifiers & GLFW.GLFW_MOD_CONTROL) != 0) {
 			return true;
 		}
+		clearSelection();
 		scrollbackOffset = 0;
 		session.writeUserInput(bytes(typed));
 		return true;
@@ -344,7 +423,7 @@ public final class TerminalScreen extends Screen {
 
 	@Override
 	public void mouseMoved(double mouseX, double mouseY) {
-		if (session != null && !session.isClosed()
+		if (!selecting && session != null && !session.isClosed()
 				&& session.display().sendsMouseReports()
 				&& isInsideTerminal(mouseX, mouseY)) {
 			sendMouseMotion(terminalColumn(mouseX), terminalRow(mouseY), MouseButtonCodes.RELEASE,
@@ -355,7 +434,12 @@ public final class TerminalScreen extends Screen {
 
 	@Override
 	public boolean mouseClicked(MouseButtonEvent event, boolean doubleClick) {
+		if (canStartSelection(event)) {
+			startSelection(event.x(), event.y());
+			return true;
+		}
 		if (!canSendMouseEvent(event.x(), event.y())) {
+			clearSelection();
 			return super.mouseClicked(event, doubleClick);
 		}
 		int button = terminalMouseButton(event.button());
@@ -370,6 +454,15 @@ public final class TerminalScreen extends Screen {
 
 	@Override
 	public boolean mouseReleased(MouseButtonEvent event) {
+		if (selecting) {
+			updateSelection(event.x(), event.y());
+			selecting = false;
+			if (isEmptySelection()) {
+				clearSelection();
+			}
+			setDragging(false);
+			return true;
+		}
 		if (!canSendMouseEvent(event.x(), event.y())) {
 			setDragging(false);
 			return super.mouseReleased(event);
@@ -387,6 +480,10 @@ public final class TerminalScreen extends Screen {
 
 	@Override
 	public boolean mouseDragged(MouseButtonEvent event, double dragX, double dragY) {
+		if (selecting) {
+			updateSelection(event.x(), event.y());
+			return true;
+		}
 		if (!canSendMouseEvent(event.x(), event.y())) {
 			return super.mouseDragged(event, dragX, dragY);
 		}
@@ -419,6 +516,53 @@ public final class TerminalScreen extends Screen {
 		return session != null && !session.isClosed()
 				&& !session.display().alternateScreenBuffer()
 				&& isInsideTerminal(mouseX, mouseY);
+	}
+
+	private boolean canStartSelection(MouseButtonEvent event) {
+		return session != null && !session.isClosed()
+				&& event.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT
+				&& isInsideTerminal(event.x(), event.y())
+				&& (!session.display().sendsMouseReports() || (event.modifiers() & GLFW.GLFW_MOD_SHIFT) != 0);
+	}
+
+	private void startSelection(double mouseX, double mouseY) {
+		selectionAnchor = selectionPoint(mouseX, mouseY, false);
+		session.display().setSelection(new TerminalSelection(selectionAnchor, new Point(selectionAnchor)));
+		selecting = true;
+		setDragging(true);
+	}
+
+	private void updateSelection(double mouseX, double mouseY) {
+		if (selectionAnchor == null) {
+			return;
+		}
+		Point end = selectionPoint(mouseX, mouseY, true);
+		session.display().setSelection(new TerminalSelection(selectionAnchor, end));
+	}
+
+	private boolean isEmptySelection() {
+		TerminalSelection selection = session.display().getSelection();
+		return selection == null || selection.getEnd() == null || comparePoints(selection.getStart(), selection.getEnd()) == 0;
+	}
+
+	private void clearSelection() {
+		selecting = false;
+		selectionAnchor = null;
+		if (session != null) {
+			session.display().clearSelection();
+		}
+	}
+
+	private Point selectionPoint(double mouseX, double mouseY, boolean endpoint) {
+		int visibleRow = terminalRow(mouseY);
+		int row = bufferRow(visibleRow);
+		int column = terminalColumn(mouseX);
+		if (!endpoint || selectionAnchor == null) {
+			return new Point(column, row);
+		}
+		boolean beforeAnchor = row < selectionAnchor.y || (row == selectionAnchor.y && column < selectionAnchor.x);
+		int boundaryColumn = beforeAnchor ? column : Math.min(columns, column + 1);
+		return new Point(boundaryColumn, row);
 	}
 
 	private void scrollScrollback(int lines) {
@@ -504,6 +648,13 @@ public final class TerminalScreen extends Screen {
 
 	private int terminalRow(double mouseY) {
 		return Math.max(0, Math.min(rows - 1, (int) ((mouseY - terminalY) / charHeight)));
+	}
+
+	private static int comparePoints(Point first, Point second) {
+		if (first.y != second.y) {
+			return Integer.compare(first.y, second.y);
+		}
+		return Integer.compare(first.x, second.x);
 	}
 
 	private static int terminalMouseButton(int button) {

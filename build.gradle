@@ -61,10 +61,19 @@ tasks.register("verifyTerminalInputPrediction", JavaExec) {
 	mainClass = "dev.br0b.minecraftty.client.terminal.TerminalInputPredictionVerifier"
 }
 
+tasks.register("verifyTerminalSelection", JavaExec) {
+	group = "verification"
+	description = "Runs fast terminal selection text checks without starting Minecraft."
+	dependsOn testClasses
+	classpath = sourceSets.test.runtimeClasspath
+	mainClass = "dev.br0b.minecraftty.client.terminal.TerminalSelectionVerifier"
+}
+
 tasks.named("check") {
 	dependsOn verifyTerminalCellWidth
 	dependsOn verifyTerminalImageProtocolFilter
 	dependsOn verifyTerminalInputPrediction
+	dependsOn verifyTerminalSelection
 }
 
 tasks.named("test", Test) {

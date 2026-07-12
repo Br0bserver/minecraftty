@@ -17,6 +17,7 @@ final class MinecrafttyTerminalDisplay implements TerminalDisplay {
 	private volatile boolean alternateScreenBuffer = false;
 	private volatile MouseMode mouseMode = MouseMode.MOUSE_REPORTING_NONE;
 	private volatile MouseFormat mouseFormat = MouseFormat.MOUSE_FORMAT_XTERM;
+	private volatile TerminalSelection selection;
 	private volatile String windowTitle = "minecraftty";
 
 	@Override
@@ -49,6 +50,7 @@ final class MinecrafttyTerminalDisplay implements TerminalDisplay {
 	@Override
 	public void useAlternateScreenBuffer(boolean enabled) {
 		alternateScreenBuffer = enabled;
+		selection = null;
 	}
 
 	@Override
@@ -63,7 +65,7 @@ final class MinecrafttyTerminalDisplay implements TerminalDisplay {
 
 	@Override
 	public TerminalSelection getSelection() {
-		return null;
+		return selection;
 	}
 
 	@Override
@@ -122,6 +124,14 @@ final class MinecrafttyTerminalDisplay implements TerminalDisplay {
 
 	MouseFormat mouseFormat() {
 		return mouseFormat;
+	}
+
+	void setSelection(TerminalSelection selection) {
+		this.selection = selection;
+	}
+
+	void clearSelection() {
+		selection = null;
 	}
 
 	boolean sendsMouseReports() {

@@ -20,12 +20,25 @@ final class TerminalRenderCache implements TextBufferChangesListener {
 
 	void drawLine(GuiGraphicsExtractor graphics, TerminalGlyphAtlas glyphAtlas, TerminalLine line, int bufferRow,
 			int visibleRow, int terminalX, int terminalY, int columns, int charWidth, int charHeight) {
+		drawLineBackground(graphics, line, bufferRow, visibleRow, terminalX, terminalY, columns, charWidth, charHeight);
+		drawLineForeground(graphics, glyphAtlas, line, bufferRow, visibleRow, terminalX, terminalY, columns,
+				charWidth, charHeight);
+	}
+
+	void drawLineBackground(GuiGraphicsExtractor graphics, TerminalLine line, int bufferRow, int visibleRow,
+			int terminalX, int terminalY, int columns, int charWidth, int charHeight) {
 		CachedLine cachedLine = cachedLine(line, bufferRow, columns, charWidth, charHeight);
 		int y = terminalY + visibleRow * charHeight;
 		for (BackgroundRun run : cachedLine.backgroundRuns) {
 			int x = terminalX + run.column * charWidth;
 			graphics.fill(x, y, x + run.cells * charWidth, y + charHeight, run.color);
 		}
+	}
+
+	void drawLineForeground(GuiGraphicsExtractor graphics, TerminalGlyphAtlas glyphAtlas, TerminalLine line,
+			int bufferRow, int visibleRow, int terminalX, int terminalY, int columns, int charWidth, int charHeight) {
+		CachedLine cachedLine = cachedLine(line, bufferRow, columns, charWidth, charHeight);
+		int y = terminalY + visibleRow * charHeight;
 		for (UnderlineRun run : cachedLine.underlineRuns) {
 			int x = terminalX + run.column * charWidth;
 			graphics.fill(x, y + charHeight - 2, x + run.cells * charWidth, y + charHeight - 1, run.color);
