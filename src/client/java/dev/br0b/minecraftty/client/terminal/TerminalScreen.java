@@ -119,7 +119,8 @@ public final class TerminalScreen extends Screen {
 		}
 
 		if (session == null) {
-			glyphAtlas.draw(graphics, "Starting terminal...", DEFAULT_FOREGROUND, terminalX, terminalY, 20);
+			glyphAtlas.draw(graphics, "Starting terminal...", DEFAULT_FOREGROUND, terminalX, terminalY, 20,
+					charWidth, charHeight);
 			return;
 		}
 
@@ -128,7 +129,7 @@ public final class TerminalScreen extends Screen {
 		graphics.text(font, statusComponent(), terminalX, statusY, 0xFF87909B);
 		if (session.isClosed()) {
 			glyphAtlas.draw(graphics, Component.translatable("screen.minecraftty.terminal.closed").getString(), 0xFFFFCC66,
-					terminalX, Math.max(terminalY, statusY - charHeight - 8), columns);
+					terminalX, Math.max(terminalY, statusY - charHeight - 8), columns, charWidth, charHeight);
 		}
 	}
 
@@ -199,7 +200,8 @@ public final class TerminalScreen extends Screen {
 			int width = terminalCellWidth(cluster);
 			if (width > 0 && !isBlankCluster(cluster)) {
 				glyphAtlas.draw(graphics, TerminalGlyphSubstitution.displayText(cluster), foreground(style),
-						terminalX + column * charWidth, terminalY + row * charHeight, width);
+						terminalX + column * charWidth, terminalY + row * charHeight, width,
+						charWidth, charHeight);
 			}
 			column += width;
 			offset = nextOffset;
@@ -231,6 +233,9 @@ public final class TerminalScreen extends Screen {
 	}
 
 	private static int terminalCellWidth(String text) {
+		if (isEmojiPresentationCluster(text)) {
+			return 2;
+		}
 		int width = 0;
 		boolean hasJoinerSequence = false;
 		boolean hasRegionalIndicatorPair = false;
@@ -252,6 +257,19 @@ public final class TerminalScreen extends Screen {
 			return 2;
 		}
 		return width;
+	}
+
+	private static boolean isEmojiPresentationCluster(String text) {
+		for (int offset = 0; offset < text.length(); ) {
+			int codePoint = text.codePointAt(offset);
+			if ((codePoint >= 0x1F000 && codePoint <= 0x1FAFF)
+					|| (codePoint >= 0xFE00 && codePoint <= 0xFE0F)
+					|| codePoint == 0x200D) {
+				return true;
+			}
+			offset += Character.charCount(codePoint);
+		}
+		return false;
 	}
 
 	private static int terminalCellWidth(int codePoint) {
