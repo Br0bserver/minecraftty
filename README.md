@@ -17,7 +17,7 @@ The project pins Gradle to `/usr/lib/jvm/java-25-openjdk` through `gradle.proper
 
 ## Usage
 
-- Press `F12` in the client to open the terminal.
+- Press `F12` in the client to open the terminal. This and the settings key can be changed in Minecraft's Controls screen.
 - The first launch asks for explicit confirmation because commands run on the host as the same user that launched Minecraft.
 - The terminal starts `$SHELL -l`, falling back to `/bin/bash`.
 - `Esc` is sent to the terminal, so Vim and other TUI programs can use it normally.
@@ -28,8 +28,8 @@ The project pins Gradle to `/usr/lib/jvm/java-25-openjdk` through `gradle.proper
 
 | Input | Action |
 | --- | --- |
-| `F12` | Open the terminal or return to the previous screen |
-| `F10` | Open settings; press it again to save and return |
+| `F12` (default) | Open the terminal or return to the previous screen |
+| `F10` (default) | Open settings; press it again to save and return |
 | `Ctrl+Shift+C` / `Ctrl+Insert` | Copy the current selection |
 | `Ctrl+Shift+V` / `Shift+Insert` | Paste clipboard text |
 | `Shift+PageUp` / `Shift+PageDown` | Move through scrollback |

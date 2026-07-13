@@ -11,12 +11,14 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.client.gui.screens.AlertScreen;
 import net.minecraft.client.gui.screens.ConfirmScreen;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.network.chat.Component;
 import org.lwjgl.glfw.GLFW;
 
 public final class MinecrafttyClient implements ClientModInitializer {
 	private static final KeyMapping.Category CATEGORY = KeyMapping.Category.register(Minecraftty.id("terminal"));
 	private static KeyMapping openTerminalKey;
+	private static KeyMapping openSettingsKey;
 
 	@Override
 	public void onInitializeClient() {
@@ -26,12 +28,29 @@ public final class MinecrafttyClient implements ClientModInitializer {
 				GLFW.GLFW_KEY_F12,
 				CATEGORY
 		));
+		openSettingsKey = KeyMappingHelper.registerKeyMapping(new KeyMapping(
+				"key.minecraftty.open_settings",
+				GLFW.GLFW_KEY_F10,
+				CATEGORY
+		));
 
 		ClientTickEvents.END_CLIENT_TICK.register(client -> {
 			while (openTerminalKey.consumeClick()) {
 				openTerminal(client);
 			}
 		});
+	}
+
+	public static boolean matchesTerminalKey(KeyEvent event) {
+		return openTerminalKey != null && openTerminalKey.matches(event);
+	}
+
+	public static boolean matchesSettingsKey(KeyEvent event) {
+		return openSettingsKey != null && openSettingsKey.matches(event);
+	}
+
+	public static Component terminalKeyName() {
+		return openTerminalKey == null ? Component.literal("F12") : openTerminalKey.getTranslatedKeyMessage();
 	}
 
 	private static void openTerminal(Minecraft client) {

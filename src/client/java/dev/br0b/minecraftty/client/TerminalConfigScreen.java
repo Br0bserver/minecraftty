@@ -9,7 +9,6 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
-import org.lwjgl.glfw.GLFW;
 
 import java.util.Locale;
 
@@ -100,7 +99,7 @@ public final class TerminalConfigScreen extends Screen {
 
 	@Override
 	public boolean keyPressed(KeyEvent event) {
-		if (event.key() == GLFW.GLFW_KEY_F10) {
+		if (MinecrafttyClient.matchesSettingsKey(event)) {
 			saveAndClose();
 			return true;
 		}

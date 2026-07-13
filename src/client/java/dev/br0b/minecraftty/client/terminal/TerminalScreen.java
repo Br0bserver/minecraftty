@@ -13,6 +13,7 @@ import com.jediterm.terminal.model.TerminalTextBuffer;
 import dev.br0b.minecraftty.Minecraftty;
 import dev.br0b.minecraftty.client.TerminalConfig;
 import dev.br0b.minecraftty.client.TerminalConfigScreen;
+import dev.br0b.minecraftty.client.MinecrafttyClient;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
@@ -341,11 +342,11 @@ public final class TerminalScreen extends Screen {
 	public boolean keyPressed(KeyEvent event) {
 		int keyCode = event.key();
 		int modifiers = event.modifiers();
-		if (keyCode == GLFW.GLFW_KEY_F12) {
+		if (MinecrafttyClient.matchesTerminalKey(event)) {
 			Minecraft.getInstance().setScreen(parent);
 			return true;
 		}
-		if (keyCode == GLFW.GLFW_KEY_F10) {
+		if (MinecrafttyClient.matchesSettingsKey(event)) {
 			openSettings();
 			return true;
 		}
@@ -833,7 +834,8 @@ public final class TerminalScreen extends Screen {
 
 	private MutableComponent statusComponent() {
 		if (session == null) {
-			return Component.translatable("screen.minecraftty.terminal.status.compact")
+			return Component.translatable("screen.minecraftty.terminal.status.compact",
+					MinecrafttyClient.terminalKeyName())
 					.withStyle(Style.EMPTY.withoutShadow());
 		}
 		if (System.currentTimeMillis() < copyStatusUntilMs) {
@@ -844,12 +846,14 @@ public final class TerminalScreen extends Screen {
 			return Component.translatable("screen.minecraftty.terminal.history", scrollbackOffset,
 					session.textBuffer().getHistoryLinesCount()).withStyle(Style.EMPTY.withoutShadow());
 		}
-		MutableComponent status = Component.translatable("screen.minecraftty.terminal.status")
+		MutableComponent status = Component.translatable("screen.minecraftty.terminal.status",
+				MinecrafttyClient.terminalKeyName())
 				.withStyle(Style.EMPTY.withoutShadow());
 		int availableWidth = settingsButton == null ? terminalWidth
 				: settingsButton.getX() - SETTINGS_BUTTON_GAP - terminalX;
 		if (font.width(status) > availableWidth) {
-			status = Component.translatable("screen.minecraftty.terminal.status.compact")
+			status = Component.translatable("screen.minecraftty.terminal.status.compact",
+					MinecrafttyClient.terminalKeyName())
 					.withStyle(Style.EMPTY.withoutShadow());
 		}
 		return status;
