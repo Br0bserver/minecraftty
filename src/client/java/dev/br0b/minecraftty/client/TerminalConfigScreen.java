@@ -6,8 +6,10 @@ import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.CycleButton;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.KeyEvent;
 import net.minecraft.network.chat.CommonComponents;
 import net.minecraft.network.chat.Component;
+import org.lwjgl.glfw.GLFW;
 
 import java.util.Locale;
 
@@ -94,6 +96,15 @@ public final class TerminalConfigScreen extends Screen {
 	private void saveAndClose() {
 		TerminalConfig.apply(draft);
 		minecraft.setScreen(parent);
+	}
+
+	@Override
+	public boolean keyPressed(KeyEvent event) {
+		if (event.key() == GLFW.GLFW_KEY_F10) {
+			saveAndClose();
+			return true;
+		}
+		return super.keyPressed(event);
 	}
 
 	@Override

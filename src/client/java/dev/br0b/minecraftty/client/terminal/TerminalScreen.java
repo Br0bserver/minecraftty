@@ -15,6 +15,7 @@ import dev.br0b.minecraftty.client.TerminalConfig;
 import dev.br0b.minecraftty.client.TerminalConfigScreen;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.CharacterEvent;
 import net.minecraft.client.input.KeyEvent;
@@ -40,6 +41,9 @@ public final class TerminalScreen extends Screen {
 	private static final int OUTER_MARGIN = 14;
 	private static final int PANEL_PADDING = 12;
 	private static final int STATUS_GAP = 8;
+	private static final int SETTINGS_BUTTON_WIDTH = 68;
+	private static final int SETTINGS_BUTTON_HEIGHT = 18;
+	private static final int SETTINGS_BUTTON_GAP = 8;
 	private static final int SCROLLBACK_WHEEL_LINES = 3;
 	private static final int SELECTION_SCROLL_EDGE_ROWS = 1;
 	private static final long CLICK_CHAIN_MS = 500L;
@@ -75,6 +79,7 @@ public final class TerminalScreen extends Screen {
 	private long lastSelectionClickTimeMs;
 	private int selectionClickCount;
 	private long copyStatusUntilMs;
+	private Button settingsButton;
 	private String startupError;
 
 	public TerminalScreen(Screen parent) {
@@ -87,6 +92,11 @@ public final class TerminalScreen extends Screen {
 		glyphAtlas = TerminalGlyphAtlas.get();
 		renderCache.clear();
 		recalculateTerminalSize();
+		settingsButton = addRenderableWidget(Button.builder(
+				Component.translatable("screen.minecraftty.config.open"), button -> openSettings())
+				.bounds(panelX + panelWidth - PANEL_PADDING - SETTINGS_BUTTON_WIDTH,
+						statusY - 5, SETTINGS_BUTTON_WIDTH, SETTINGS_BUTTON_HEIGHT)
+				.build());
 		try {
 			session = TerminalManager.getOrStart(columns, rows);
 			session.textBuffer().addChangesListener(renderCache);
@@ -139,9 +149,11 @@ public final class TerminalScreen extends Screen {
 				terminalX + columns * charWidth + 1,
 				terminalY + rows * charHeight + 1,
 				defaultBackground());
+		graphics.fill(panelX + 1, statusY - 4, panelX + panelWidth - 1, panelY + panelHeight - 1, STATUS_BACKGROUND);
 
 		if (startupError != null) {
 			graphics.text(font, "Failed to start shell: " + startupError, terminalX, terminalY, 0xFFFF7777);
+			super.extractRenderState(graphics, mouseX, mouseY, delta);
 			return;
 		}
 
@@ -149,18 +161,19 @@ public final class TerminalScreen extends Screen {
 			glyphAtlas.draw(graphics, "Starting terminal...", DEFAULT_FOREGROUND, terminalX, terminalY, 20,
 					charWidth, charHeight);
 			glyphAtlas.flushUploads();
+			super.extractRenderState(graphics, mouseX, mouseY, delta);
 			return;
 		}
 
 		clampScrollbackOffset();
 		drawTerminal(graphics);
-		graphics.fill(panelX + 1, statusY - 4, panelX + panelWidth - 1, panelY + panelHeight - 1, STATUS_BACKGROUND);
 		graphics.text(font, statusComponent(), terminalX, statusY, 0xFF87909B);
 		if (session.isClosed()) {
 			glyphAtlas.draw(graphics, Component.translatable("screen.minecraftty.terminal.closed").getString(), 0xFFFFCC66,
 					terminalX, Math.max(terminalY, statusY - charHeight - 8), columns, charWidth, charHeight);
 		}
 		glyphAtlas.flushUploads();
+		super.extractRenderState(graphics, mouseX, mouseY, delta);
 	}
 
 	private void drawTerminal(GuiGraphicsExtractor graphics) {
@@ -265,7 +278,7 @@ public final class TerminalScreen extends Screen {
 			return DEFAULT_FOREGROUND;
 		}
 		if (style.hasOption(TextStyle.Option.INVERSE)) {
-			return backgroundColor(style.getBackground(), defaultBackground());
+			return color(style.getBackground(), 0xFF000000 | TERMINAL_BACKGROUND_RGB);
 		}
 		int color = color(style.getForeground(), DEFAULT_FOREGROUND);
 		if (style.hasOption(TextStyle.Option.DIM)) {
@@ -282,13 +295,10 @@ public final class TerminalScreen extends Screen {
 			return defaultBackground();
 		}
 		if (style.hasOption(TextStyle.Option.INVERSE)) {
-			return withOpacity(color(style.getForeground(), DEFAULT_FOREGROUND), TerminalConfig.backgroundOpacity());
+			return color(style.getForeground(), DEFAULT_FOREGROUND);
 		}
-		return withOpacity(color(style.getBackground(), defaultBackground()), TerminalConfig.backgroundOpacity());
-	}
-
-	private static int backgroundColor(TerminalColor terminalColor, int fallback) {
-		return color(terminalColor, fallback);
+		TerminalColor background = style.getBackground();
+		return background == null ? defaultBackground() : color(background, defaultBackground());
 	}
 
 	private static int color(TerminalColor terminalColor, int fallback) {
@@ -336,7 +346,7 @@ public final class TerminalScreen extends Screen {
 			return true;
 		}
 		if (keyCode == GLFW.GLFW_KEY_F10) {
-			Minecraft.getInstance().setScreen(new TerminalConfigScreen(this));
+			openSettings();
 			return true;
 		}
 		if (session == null || session.isClosed()) {
@@ -823,16 +833,30 @@ public final class TerminalScreen extends Screen {
 
 	private MutableComponent statusComponent() {
 		if (session == null) {
-			return Component.translatable("screen.minecraftty.terminal.status").withStyle(Style.EMPTY.withoutShadow());
-		}
-		String status = Component.translatable("screen.minecraftty.terminal.status").getString();
-		if (scrollbackOffset > 0) {
-			status += " | history " + scrollbackOffset + "/" + session.textBuffer().getHistoryLinesCount();
+			return Component.translatable("screen.minecraftty.terminal.status.compact")
+					.withStyle(Style.EMPTY.withoutShadow());
 		}
 		if (System.currentTimeMillis() < copyStatusUntilMs) {
-			status += " | Copied";
+			return Component.translatable("screen.minecraftty.terminal.copied")
+					.withStyle(Style.EMPTY.withoutShadow());
 		}
-		return Component.literal(status).withStyle(Style.EMPTY.withoutShadow());
+		if (scrollbackOffset > 0) {
+			return Component.translatable("screen.minecraftty.terminal.history", scrollbackOffset,
+					session.textBuffer().getHistoryLinesCount()).withStyle(Style.EMPTY.withoutShadow());
+		}
+		MutableComponent status = Component.translatable("screen.minecraftty.terminal.status")
+				.withStyle(Style.EMPTY.withoutShadow());
+		int availableWidth = settingsButton == null ? terminalWidth
+				: settingsButton.getX() - SETTINGS_BUTTON_GAP - terminalX;
+		if (font.width(status) > availableWidth) {
+			status = Component.translatable("screen.minecraftty.terminal.status.compact")
+					.withStyle(Style.EMPTY.withoutShadow());
+		}
+		return status;
+	}
+
+	private void openSettings() {
+		Minecraft.getInstance().setScreen(new TerminalConfigScreen(this));
 	}
 
 	@Override
