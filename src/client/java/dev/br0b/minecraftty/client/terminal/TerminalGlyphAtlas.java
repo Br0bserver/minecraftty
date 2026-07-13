@@ -141,7 +141,7 @@ final class TerminalGlyphAtlas implements AutoCloseable {
 		} else if (kind == GlyphKind.BUILTIN) {
 			renderBuiltinGlyph(text.codePointAt(0), color, cursorX, cursorY, width, height);
 		} else if (!emojiRenderer.render(text, cursorX, cursorY, width, height, image)) {
-			renderTextGlyph(text, color, cursorX, cursorY, width, height);
+			renderTextGlyph(text, color, cursorX, cursorY, width, height, cells);
 		}
 		uploadPending = true;
 
@@ -156,20 +156,24 @@ final class TerminalGlyphAtlas implements AutoCloseable {
 		return glyph;
 	}
 
-	private void renderTextGlyph(String text, int color, int atlasX, int atlasY, int width, int height) {
+	private void renderTextGlyph(String text, int color, int atlasX, int atlasY, int width, int height, int cells) {
 		BufferedImage glyphImage = new BufferedImage(width, height, BufferedImage.TYPE_INT_ARGB);
 		Graphics2D graphics = glyphImage.createGraphics();
 		graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 		graphics.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
 		graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
-		Font font = fontFor(text);
+		float widthScale = width / (cellWidth * RASTER_SCALE * Math.max(1, cells));
+		float heightScale = height / (cellHeight * RASTER_SCALE);
+		float glyphScale = Math.min(widthScale, heightScale);
+		Font baseFont = fontFor(text);
+		Font font = baseFont.deriveFont(baseFont.getSize2D() * glyphScale);
 		graphics.setFont(font);
 		graphics.setColor(new Color(color, true));
 		graphics.setClip(0, 0, width, height);
 
 		Rectangle2D visualBounds = font.createGlyphVector(graphics.getFontRenderContext(), text).getVisualBounds();
 		int textX = isCellFillFriendly(text) ? (int) Math.floor(-visualBounds.getX()) : 0;
-		int textY = Math.max(0, Math.min(height - 1, ascent));
+		int textY = Math.max(0, Math.min(height - 1, Math.round(ascent * glyphScale)));
 		graphics.drawString(text, textX, textY);
 		graphics.dispose();
 
@@ -199,7 +203,7 @@ final class TerminalGlyphAtlas implements AutoCloseable {
 			case 0xE0B6 -> graphics.fill(new Ellipse2D.Float(0, 0, width * 2.0F, height));
 			default -> {
 				graphics.dispose();
-				renderTextGlyph(new String(Character.toChars(codePoint)), color, atlasX, atlasY, width, height);
+				renderTextGlyph(new String(Character.toChars(codePoint)), color, atlasX, atlasY, width, height, 1);
 				return;
 			}
 		}
@@ -372,7 +376,7 @@ final class TerminalGlyphAtlas implements AutoCloseable {
 				renderDottedLine(graphics, codePoint, width, height, stroke);
 			default -> {
 				graphics.dispose();
-				renderTextGlyph(new String(Character.toChars(codePoint)), color, atlasX, atlasY, width, height);
+				renderTextGlyph(new String(Character.toChars(codePoint)), color, atlasX, atlasY, width, height, 1);
 				return;
 			}
 		}
